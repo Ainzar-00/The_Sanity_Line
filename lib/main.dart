@@ -1,0 +1,44 @@
+import 'package:flutter/material.dart';
+import 'screens/assessment.dart';
+import 'screens/authentication_screen.dart';
+import 'screens/home_screen.dart';
+import 'screens/nutrition_screen.dart';
+import 'screens/splash_screen.dart';
+
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart'; 
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform, // from firebase_options.dart
+  );
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      initialRoute: '/',
+      routes: {
+        '/': (context) => const SplashScreen(),
+        '/login': (context) => const LoginScreen(),
+        '/home': (context) {
+          final userId =
+              ModalRoute.of(context)?.settings.arguments as String?;
+          return HomeScreen(userId: userId);
+        },
+        '/nutrition': (context) => const NutritionScreen(),
+        '/assessment': (context) {
+          final userId =
+              ModalRoute.of(context)!.settings.arguments as String;
+          return AssessmentScreen(userId: userId);
+        },
+      },
+    );
+  }
+}

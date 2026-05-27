@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "1013286477109",
+    "project_id": "the-sanity-line",
+    "storage_bucket": "the-sanity-line.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1013286477109:android:6aaff48185b3f20969807c",
+        "android_client_info": {
+          "package_name": "com.example.the_sanity_line"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1013286477109-pajmqli5ulra5r8csp8s4sk3v40hg4ba.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.the_sanity_line",
+            "certificate_hash": "b6f17036e4646e6da1a535495f1d2700e4f81165"
+          }
+        },
+        {
+          "client_id": "1013286477109-fdcvg7bbovm9a87onlirdepj6e5eo6k4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCYsiDd4ChXk6x37-l0woSskvguSgX9Lq4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1013286477109-fdcvg7bbovm9a87onlirdepj6e5eo6k4.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "1013286477109-60nib52pbtr8ov76d9du0ri887af5uto.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.theSanityLine"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
