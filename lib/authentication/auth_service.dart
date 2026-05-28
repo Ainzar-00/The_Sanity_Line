@@ -2,7 +2,6 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_result.dart';
-import '../api/profile_api_service.dart';
 import '../api/user_api_service.dart';
 import '../models/user_model.dart';
 import '../models/provider_enum.dart';
@@ -13,41 +12,14 @@ import '../models/provider_enum.dart';
 // inspect .success / .errorMessage / .route.
 
 class AuthService {
-  // ── Profile-based route resolution ────────────────────────────────────────
-  // Three possible outcomes:
-  //   local flag set              → /home  (fastest, offline-safe)
-  //   API returns null (404)      → /assessment (user has no profile yet)
-  //   API throws (network error)  → /home  (safe fallback — returning users
-  //                                          bypass assessment; new users
-  //                                          always come from signUp() which
-  //                                          routes to /assessment directly)
-  static Future<AuthResult> _resolveRoute(String uid) async {
-    final prefs = await SharedPreferences.getInstance();
-
-    // 1. Fast-path: local flag already set.
-    if (prefs.getBool('onboarding_done_$uid') ?? false) {
-      return AuthResult.ok(route: '/home', routeArguments: uid);
-    }
-
-    // 2. Ask the API — but only trust it when reachable.
-    try {
-      final profile = await ProfileApiService.getProfileByUserId(uid);
-      if (profile != null && profile.onboardingCompletedAt != null) {
-        // Onboarding is complete — cache locally for future logins.
-        await prefs.setBool('onboarding_done_$uid', true);
-        return AuthResult.ok(route: '/home', routeArguments: uid);
-      }
-      // profile == null means HTTP 404: user genuinely has no profile yet.
-      return AuthResult.ok(route: '/assessment', routeArguments: uid);
-    } catch (_) {
-      // Network/server error — we cannot determine status.
-      // Defaulting to /home avoids re-showing assessment to returning users.
-      // Brand-new users always pass through signUp() which hardcodes /assessment.
-      return AuthResult.ok(route: '/home', routeArguments: uid);
-    }
-  }
-
   AuthService._(); // not instantiable — use static methods
+
+  static final _googleSignIn = GoogleSignIn(
+    clientId:
+        '1013286477109-fdcvg7bbovm9a87onlirdepj6e5eo6k4.apps.googleusercontent.com',
+    serverClientId:
+        '1013286477109-fdcvg7bbovm9a87onlirdepj6e5eo6k4.apps.googleusercontent.com',
+  );
 
   // ── Email / password login ─────────────────────────────────────────────────
 
@@ -57,13 +29,13 @@ class AuthService {
         email: email.trim(),
         password: password.trim(),
       );
+
+      // Account exists in Firebase — save UID and proceed
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('uid', credential.user!.uid);
-
-      // Update last seen in backend
       await UserApiService.updateLastSeen(credential.user!.uid);
 
-      return _resolveRoute(credential.user!.uid);
+      return AuthResult.ok(route: '/home', routeArguments: credential.user!.uid);
     } on FirebaseAuthException catch (e) {
       return AuthResult.error(mapFirebaseError(e.code));
     } catch (_) {
@@ -89,10 +61,7 @@ class AuthService {
             password: password.trim(),
           );
       await credential.user!.updateDisplayName(name.trim());
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('uid', credential.user!.uid);
 
-      // Sync user to backend
       final userModel = UserModel(
         userId: credential.user!.uid,
         email: email.trim(),
@@ -101,7 +70,9 @@ class AuthService {
       );
       await UserApiService.createUser(userModel);
 
-      // New user always needs onboarding
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('uid', credential.user!.uid);
+
       return AuthResult.ok(route: '/assessment', routeArguments: credential.user!.uid);
     } on FirebaseAuthException catch (e) {
       return AuthResult.error(mapFirebaseError(e.code));
@@ -112,24 +83,11 @@ class AuthService {
 
   // ── Google sign-in ─────────────────────────────────────────────────────────
 
-  static Future<AuthResult> signInWithGoogle() async {
-    // ⚠️ Replace with your Web OAuth 2.0 client ID from Firebase Console →
-    // Authentication → Sign-in method → Google → Web SDK configuration
-    const webClientId =
-        '1013286477109-fdcvg7bbovm9a87onlirdepj6e5eo6k4.apps.googleusercontent.com';
-
+  static Future<AuthResult> signInWithGoogle({required bool isLogin}) async {
     try {
-      final googleSignIn = GoogleSignIn(
-        // Required for Flutter Web
-        clientId: webClientId,
-        // Required for Android to get a valid idToken for Firebase
-        serverClientId: webClientId,
-      );
-      final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
-      if (googleUser == null) {
-        // User cancelled the flow — not an error, just abort
-        return AuthResult.error('');
-      }
+      final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) return AuthResult.error('');
+
       final googleAuth = await googleUser.authentication;
       final oauthCredential = GoogleAuthProvider.credential(
         accessToken: googleAuth.accessToken,
@@ -138,29 +96,53 @@ class AuthService {
       final credential = await FirebaseAuth.instance.signInWithCredential(
         oauthCredential,
       );
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('uid', credential.user!.uid);
 
-      // Ensure user exists in backend and update last seen
-      final existingUser = await UserApiService.getUser(credential.user!.uid);
-      if (existingUser == null) {
-        final userModel = UserModel(
-          userId: credential.user!.uid,
-          email: credential.user!.email,
-          displayName: credential.user!.displayName,
-          photoUrl: credential.user!.photoURL,
-          provider: Provider.google,
-        );
-        await UserApiService.createUser(userModel);
-      } else {
-        await UserApiService.updateLastSeen(credential.user!.uid);
+      final uid = credential.user!.uid;
+      // Firebase tells us clearly whether this UID existed before this call
+      final accountExistsInFirebase =
+          credential.additionalUserInfo?.isNewUser == false;
+
+      // ── Login ─────────────────────────────────────────────────────────────
+      if (isLogin) {
+        if (!accountExistsInFirebase) {
+          // UID does not exist in Firebase — clean up and block login
+          try { await credential.user?.delete(); } catch (_) {}
+          await _googleSignIn.signOut();
+          return AuthResult.error('No account found. Please sign up first.');
+        }
+
+        // UID exists — save it and go home
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('uid', uid);
+        await UserApiService.updateLastSeen(uid);
+        return AuthResult.ok(route: '/home', routeArguments: uid);
       }
 
-      return _resolveRoute(credential.user!.uid);
+      // ── Sign-up ───────────────────────────────────────────────────────────
+      if (accountExistsInFirebase) {
+        // UID already exists — just log them in
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('uid', uid);
+        await UserApiService.updateLastSeen(uid);
+        return AuthResult.ok(route: '/home', routeArguments: uid);
+      }
+
+      // New UID — create profile and send to onboarding
+      final userModel = UserModel(
+        userId: uid,
+        email: credential.user!.email,
+        displayName: credential.user!.displayName,
+        photoUrl: credential.user!.photoURL,
+        provider: Provider.google,
+      );
+      await UserApiService.createUser(userModel);
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('uid', uid);
+      return AuthResult.ok(route: '/assessment', routeArguments: uid);
     } on FirebaseAuthException catch (e) {
       return AuthResult.error(mapFirebaseError(e.code));
     } catch (e) {
-      // In debug, surface the real error to help diagnose config issues.
       assert(() {
         // ignore: avoid_print
         print('[AuthService] Google sign-in exception: $e');
@@ -171,26 +153,24 @@ class AuthService {
   }
 
   // ── Session check (used by SplashScreen) ──────────────────────────────────
-  // Returns AuthResult with the destination route, or null if not logged in.
 
   static Future<AuthResult?> checkCurrentUser() async {
     await Future.delayed(const Duration(seconds: 2)); // splash delay
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return null;
 
-    // Update last seen whenever checking auth successfully
     await UserApiService.updateLastSeen(user.uid);
-
-    // Resolve route based on onboarding state
-    return _resolveRoute(user.uid);
+    return AuthResult.ok(route: '/home', routeArguments: user.uid);
   }
 
   // ── Logout ─────────────────────────────────────────────────────────────────
 
   static Future<void> logout() async {
+    // Remove UID from local storage
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('uid');
-    await GoogleSignIn().signOut();
+    // Sign out from Google and Firebase
+    await _googleSignIn.signOut();
     await FirebaseAuth.instance.signOut();
   }
 

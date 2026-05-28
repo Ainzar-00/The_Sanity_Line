@@ -1,7 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../authentication/auth_service.dart';
+import '../api/meal_log_api_service.dart';
+import '../api/morning_checkin_api_service.dart';
+import '../models/morning_checkin_model.dart';
 import '../widgets/character_chat_bubble.dart';
+import '../widgets/morning_checkin_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   final String? userId;
@@ -16,8 +21,10 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     // Show professor welcome after first frame so Overlay is ready
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _maybeShowProfessorWelcome();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await _maybeShowProfessorWelcome();
+      // Morning check-in runs after welcome (so they don't overlap)
+      _maybeShowMorningCheckin();
     });
   }
 
@@ -32,25 +39,91 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (!mounted) return;
 
-    CharacterChatBubble.show(
+    // Use a Completer so we can await dismissal before showing check-in
+    // ignore: use_build_context_synchronously — context is used inside a
+    // synchronous closure, not after an await gap; the mounted guard above covers it.
+    final dismissed = Future<void>(() {
+      final completer = _WelcomeCompleter();
+      CharacterChatBubble.show(
+        context: context,
+        characterName: 'THE PROFESSOR',
+        steps: const [
+          ChatStep(
+            imagePath: 'assets/chatPersonas/professorExplaining.png',
+            text:
+                "Welcome to your dashboard! 🎉 As I mentioned, The Sanity Line is built around six pillars of health: Nutrition, Sleep, Physical Activity, Social Connections, Mind & Body, and Avoiding Harmful Substances.",
+          ),
+          ChatStep(
+            imagePath: 'assets/chatPersonas/professorExplaining.png',
+            text:
+                "Each pillar is backed by science and tailored to your profile. Tap any of them to begin exploring — and I'll be right here to guide you along the way. Your journey starts now! 🚀",
+          ),
+        ],
+        onDismiss: () async {
+          final p = await SharedPreferences.getInstance();
+          await p.setBool(key, true);
+          completer.complete();
+        },
+      );
+      return completer.future;
+    });
+    await dismissed;
+  }
+
+  // ── Morning check-in trigger ──────────────────────────────────────────────
+
+  Future<void> _maybeShowMorningCheckin() async {
+    print('[MorningCheckin] Checking conditions...');
+    if (!mounted) return;
+    final uid = widget.userId;
+    if (uid == null) {
+      print('[MorningCheckin] Skipped: userId is null');
+      return;
+    }
+
+    // 1. Time gate — only at or after 7 AM
+    final now = DateTime.now();
+    if (now.hour < 7) {
+      print('[MorningCheckin] Skipped: It is ${now.hour}:00, which is before 7 AM');
+      return;
+    }
+
+    // 2. Already done today? (date-scoped key resets automatically each day)
+    final today = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final prefs = await SharedPreferences.getInstance();
+    final doneKey = 'checkin_done_${uid}_$today';
+    if (prefs.getBool(doneKey) ?? false) {
+      print('[MorningCheckin] Skipped: checkin_done locally is true for today');
+      return;
+    }
+
+    // 3. No meal log today (user hasn't eaten yet)
+    final hasMeal = await MealLogApiService.hasMealLogToday(uid);
+    if (hasMeal) {
+      print('[MorningCheckin] Skipped: User already has a meal log for today');
+      return;
+    }
+
+    // 4. Server-side guard (handles reinstalls / multi-device)
+    final serverHasOne = await MorningCheckinApiService.hasCheckinToday(uid);
+    if (serverHasOne) {
+      print('[MorningCheckin] Skipped: Server says checkin already exists for today');
+      await prefs.setBool(doneKey, true); // sync local state
+      return;
+    }
+
+    if (!mounted) return;
+
+    print('[MorningCheckin] All conditions passed! Showing dialog.');
+
+    MorningCheckinDialog.show(
       context: context,
-      characterName: 'THE PROFESSOR',
-      steps: const [
-        // Completing the app introduction started during assessment
-        ChatStep(
-          imagePath: 'assets/chatPersonas/professorExplaining.png',
-          text:
-              "Welcome to your dashboard! 🎉 As I mentioned, The Sanity Line is built around six pillars of health: Nutrition, Sleep, Physical Activity, Social Connections, Mind & Body, and Avoiding Harmful Substances.",
-        ),
-        ChatStep(
-          imagePath: 'assets/chatPersonas/professorExplaining.png',
-          text:
-              "Each pillar is backed by science and tailored to your profile. Tap any of them to begin exploring — and I'll be right here to guide you along the way. Your journey starts now! 🚀",
-        ),
-      ],
-      onDismiss: () async {
-        final p = await SharedPreferences.getInstance();
-        await p.setBool(key, true);
+      userId: uid,
+      onComplete: (MorningCheckinModel checkin) async {
+        // Mark done locally immediately (resilient to API failure)
+        await prefs.setBool(doneKey, true);
+        // Submit to backend
+        await MorningCheckinApiService.submitCheckin(checkin);
       },
     );
   }
@@ -205,9 +278,9 @@ class WellnessNode extends StatelessWidget {
               shape: BoxShape.circle,
               gradient: RadialGradient(
                 colors: [
-                  glowColor.withOpacity(0.90),
-                  glowColor.withOpacity(0.55),
-                  glowColor.withOpacity(0.0),
+                  glowColor.withValues(alpha: 0.90),
+                  glowColor.withValues(alpha: 0.55),
+                  glowColor.withValues(alpha: 0.0),
                 ],
                 stops: const [0.0, 0.65, 1.0],
               ),
@@ -239,4 +312,13 @@ class WellnessNode extends StatelessWidget {
       ),
     );
   }
+}
+
+// ── Helper: makes CharacterChatBubble awaitable ──────────────────────────────
+// dart:async Completer bridges the callback-based onDismiss to a Future.
+
+class _WelcomeCompleter {
+  final _c = Completer<void>();
+  Future<void> get future => _c.future;
+  void complete() => _c.complete();
 }

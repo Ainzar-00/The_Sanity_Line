@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'package:flutter_timezone/flutter_timezone.dart';
 import '../models/user_model.dart';
 import '../models/provider_enum.dart';
 
@@ -13,23 +12,10 @@ class UserApiService {
   // Create a new user in the backend
   static Future<UserModel?> createUser(UserModel user) async {
     try {
-      // Extract the device's timezone
-      String? localTimezone;
-      try {
-        localTimezone = await FlutterTimezone.getLocalTimezone();
-      } catch (e) {
-        print('[UserApiService] Exception getting timezone: $e');
-      }
-
-      // Add the timezone to the user model if we found one
-      final userWithTimezone = localTimezone != null 
-          ? user.copyWith(timezone: localTimezone) 
-          : user;
-
       final response = await http.post(
         Uri.parse(baseUrl),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(userWithTimezone.toJson()),
+        body: jsonEncode(user.toJson()),
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {

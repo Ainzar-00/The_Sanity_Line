@@ -1,12 +1,15 @@
-// ── Provider enum ─────────────────────────────────────────────────────────────
-// Matches the Provider enum on the Spring Boot backend.
-
 enum Provider {
-  email,
-  google;
+  google('GOOGLE'),
+  email('EMAIL'),
+  apple('APPLE');
 
-  String get value => name;
+  final String value;
+  const Provider(this.value);
 
-  static Provider fromString(String s) =>
-      Provider.values.firstWhere((e) => e.name == s.toLowerCase());
+  // ✅ static method, not a constructor
+  static Provider fromString(String value) =>
+      Provider.values.firstWhere(
+        (e) => e.value == value,
+        orElse: () => throw ArgumentError('Unknown provider: $value'),
+      );
 }
