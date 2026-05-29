@@ -22,8 +22,10 @@ class AssessmentData {
   // Section 3
   Set<String> digestiveConditions = {};
   String digestiveOther = '';
+  List<String> customDigestiveConditions = [];
   Set<String> foodSensitivities = {};
   String sensitivityOther = '';
+  List<String> customSensitivities = [];
   String plantDiversity = '';
   String fermentedServings = '';
 
@@ -35,6 +37,7 @@ class AssessmentData {
   // Section 5
   Set<String> mentalConditions = {};
   String mentalOther = '';
+  List<String> customMentalConditions = [];
 }
 
 // ─── Main Screen ─────────────────────────────────────────────────────────────
@@ -196,8 +199,9 @@ class _AssessmentScreenState extends State<AssessmentScreen>
     final saved = await ProfileApiService.upsertProfile(profile);
     if (saved != null) {
       // Save mental conditions
-      final conditionsToSave = <String>[];
+      final conditionsToSave = <String>{};
       conditionsToSave.addAll(_data.mentalConditions);
+      conditionsToSave.addAll(_data.customMentalConditions);
       if (_data.mentalOther.trim().isNotEmpty) {
         conditionsToSave.add(_data.mentalOther.trim());
       }
@@ -237,8 +241,9 @@ class _AssessmentScreenState extends State<AssessmentScreen>
     await ProfileApiService.upsertProfile(profile);
 
     // Save mental conditions
-    final conditionsToSave = <String>[];
+    final conditionsToSave = <String>{};
     conditionsToSave.addAll(_data.mentalConditions);
+    conditionsToSave.addAll(_data.customMentalConditions);
     if (_data.mentalOther.trim().isNotEmpty) {
       conditionsToSave.add(_data.mentalOther.trim());
     }
@@ -268,17 +273,19 @@ class _AssessmentScreenState extends State<AssessmentScreen>
       stressLevel: _data.stress > 0 ? _data.stress : null,
       digestiveConditions: () {
         final list = _data.digestiveConditions.toList();
+        list.addAll(_data.customDigestiveConditions);
         if (_data.digestiveOther.trim().isNotEmpty) {
           list.add(_data.digestiveOther.trim());
         }
-        return list.isEmpty ? null : list;
+        return list.isEmpty ? null : list.toSet().toList();
       }(),
       foodSensitivities: () {
         final list = _data.foodSensitivities.toList();
+        list.addAll(_data.customSensitivities);
         if (_data.sensitivityOther.trim().isNotEmpty) {
           list.add(_data.sensitivityOther.trim());
         }
-        return list.isEmpty ? null : list;
+        return list.isEmpty ? null : list.toSet().toList();
       }(),
       initialPlantDiversity: int.tryParse(_data.plantDiversity),
       initialFermentedServings: double.tryParse(_data.fermentedServings),
@@ -611,6 +618,17 @@ class _AssessmentScreenState extends State<AssessmentScreen>
         _otherTextInput(
           controller: _digestiveOtherCtrl,
           placeholder: 'Describe other condition...',
+          customItems: _data.customDigestiveConditions,
+          onAdd: () {
+            final text = _digestiveOtherCtrl.text.trim();
+            if (text.isNotEmpty && !_data.customDigestiveConditions.contains(text)) {
+              setState(() {
+                _data.customDigestiveConditions.add(text);
+                _digestiveOtherCtrl.clear();
+              });
+            }
+          },
+          onDelete: (item) => setState(() => _data.customDigestiveConditions.remove(item)),
         ),
         const SizedBox(height: 20),
         _fieldLabel(number: '6', label: 'Food sensitivities'),
@@ -635,6 +653,17 @@ class _AssessmentScreenState extends State<AssessmentScreen>
         _otherTextInput(
           controller: _sensitivityOtherCtrl,
           placeholder: 'Describe other sensitivity...',
+          customItems: _data.customSensitivities,
+          onAdd: () {
+            final text = _sensitivityOtherCtrl.text.trim();
+            if (text.isNotEmpty && !_data.customSensitivities.contains(text)) {
+              setState(() {
+                _data.customSensitivities.add(text);
+                _sensitivityOtherCtrl.clear();
+              });
+            }
+          },
+          onDelete: (item) => setState(() => _data.customSensitivities.remove(item)),
         ),
         const SizedBox(height: 20),
         _fieldGroup(
@@ -742,6 +771,17 @@ class _AssessmentScreenState extends State<AssessmentScreen>
         _otherTextInput(
           controller: _mentalOtherCtrl,
           placeholder: 'Describe other condition...',
+          customItems: _data.customMentalConditions,
+          onAdd: () {
+            final text = _mentalOtherCtrl.text.trim();
+            if (text.isNotEmpty && !_data.customMentalConditions.contains(text)) {
+              setState(() {
+                _data.customMentalConditions.add(text);
+                _mentalOtherCtrl.clear();
+              });
+            }
+          },
+          onDelete: (item) => setState(() => _data.customMentalConditions.remove(item)),
         ),
         const SizedBox(height: 20),
       ],
@@ -1049,64 +1089,110 @@ class _AssessmentScreenState extends State<AssessmentScreen>
   Widget _otherTextInput({
     required TextEditingController controller,
     required String placeholder,
+    required List<String> customItems,
+    required VoidCallback onAdd,
+    required ValueChanged<String> onDelete,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 18,
-            height: 18,
-            margin: const EdgeInsets.only(top: 13, right: 10),
-            decoration: BoxDecoration(
-              border: Border.all(color: _tealBorder),
-              borderRadius: BorderRadius.circular(4),
-              color: Colors.white,
-            ),
-            child: const Center(
-              child: Text(
-                '+',
-                style: TextStyle(fontSize: 13, color: _teal500, height: 1),
-              ),
-            ),
-          ),
-          Expanded(
-            child: TextField(
-              controller: controller,
-              style: const TextStyle(fontSize: 13, color: _teal900),
-              decoration: InputDecoration(
-                hintText: placeholder,
-                hintStyle: const TextStyle(
-                  color: Color(0xFF9ab8b8),
-                  fontSize: 13,
-                ),
-                filled: true,
-                fillColor: Colors.white,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 10,
-                ),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: _tealBorder),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(
-                    color: _tealBorder,
-                    style: BorderStyle.solid,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              GestureDetector(
+                onTap: onAdd,
+                child: Container(
+                  width: 38,
+                  height: 38,
+                  margin: const EdgeInsets.only(top: 2, right: 10),
+                  decoration: BoxDecoration(
+                    color: _teal100,
+                    border: Border.all(color: _teal500),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      '+',
+                      style: TextStyle(
+                        fontSize: 22,
+                        color: _teal500,
+                        height: 1.1,
+                      ),
+                    ),
                   ),
                 ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: _teal500, width: 1.5),
+              ),
+              Expanded(
+                child: TextField(
+                  controller: controller,
+                  style: const TextStyle(fontSize: 13, color: _teal900),
+                  decoration: InputDecoration(
+                    hintText: placeholder,
+                    hintStyle: const TextStyle(
+                      color: Color(0xFF9ab8b8),
+                      fontSize: 13,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: _tealBorder),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(
+                        color: _tealBorder,
+                        style: BorderStyle.solid,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: _teal500, width: 1.5),
+                    ),
+                  ),
                 ),
               ),
+            ],
+          ),
+        ),
+        if (customItems.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(
+              children: customItems.map((item) {
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: _tealBorder),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item,
+                          style: const TextStyle(fontSize: 13, color: _teal900),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => onDelete(item),
+                        child: const Icon(Icons.close, size: 16, color: Colors.red),
+                      ),
+                    ],
+                  ),
+                );
+              }).toList(),
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 

@@ -41,6 +41,16 @@ dependencies:
   cupertino_icons: ^1.0.8
   flutter_timezone: ^5.0.2
 
+  # Database
+  drift: ^2.22.1
+  drift_sqflite: 2.0.1
+
+  # State management
+  flutter_riverpod: ^2.6.1
+
+  # Utilities
+  uuid: ^4.5.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -51,6 +61,10 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+  # Drift code generation
+  drift_dev: ^2.22.1
+  build_runner: ^2.4.13
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -81,6 +95,8 @@ flutter:
     - assets/chatPersonas/professorAssesments.png
     - assets/chatPersonas/professorWaving.png
     - assets/chatPersonas/professorExplaining.png
+    - assets/nutritionbg.png
+    - assets/nutritionDashboardAssets/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
