@@ -1,0 +1,23 @@
+const List<String> masterPlantList = [
+  'apple', 'apricot', 'avocado', 'banana', 'blackberry', 'blueberry',
+  'cherry', 'coconut', 'cranberry', 'date', 'fig', 'grape', 'grapefruit',
+  'kiwi', 'lemon', 'lime', 'mango', 'melon', 'nectarine', 'orange',
+  'papaya', 'peach', 'pear', 'pineapple', 'plum', 'pomegranate',
+  'raspberry', 'strawberry', 'watermelon', 'artichoke', 'asparagus',
+  'aubergine', 'beetroot', 'broccoli', 'brussels sprout', 'cabbage',
+  'carrot', 'cauliflower', 'celery', 'courgette', 'cucumber', 'garlic',
+  'kale', 'leek', 'lettuce', 'mushroom', 'onion', 'parsnip', 'pea',
+  'pepper', 'potato', 'pumpkin', 'radish', 'spinach', 'squash',
+  'sweet potato', 'tomato', 'turnip', 'almond', 'brazil nut', 'cashew',
+  'chestnut', 'chia seed', 'flaxseed', 'hazelnut', 'hemp seed',
+  'macadamia', 'peanut', 'pecan', 'pine nut', 'pistachio', 'pumpkin seed',
+  'sesame seed', 'sunflower seed', 'walnut', 'barley', 'brown rice',
+  'buckwheat', 'bulgur', 'corn', 'millet', 'oats', 'quinoa', 'rye',
+  'sorghum', 'spelt', 'teff', 'wheat', 'wild rice', 'black bean',
+  'broad bean', 'butter bean', 'chickpea', 'edamame', 'kidney bean',
+  'lentil', 'mung bean', 'pinto bean', 'soybean', 'split pea', 'white bean',
+  'basil', 'black pepper', 'cardamom', 'chili', 'cilantro', 'cinnamon',
+  'clove', 'coriander', 'cumin', 'dill', 'fennel', 'ginger', 'mint',
+  'nutmeg', 'oregano', 'paprika', 'parsley', 'rosemary', 'saffron',
+  'sage', 'thyme', 'turmeric'
+];

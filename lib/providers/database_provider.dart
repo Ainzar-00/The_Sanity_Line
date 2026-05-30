@@ -1,5 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../database/app_database.dart';
+import '../models/profile_model.dart';
+import '../models/mental_condition_model.dart';
+import '../models/daily_state_model.dart';
+import '../api/profile_api_service.dart';
+import '../api/mental_condition_api_service.dart';
+import '../api/daily_state_api_service.dart';
 
 // ── Singleton database ────────────────────────────────────────────────────────
 
@@ -50,3 +56,44 @@ String _today() {
       '${now.month.toString().padLeft(2, '0')}-'
       '${now.day.toString().padLeft(2, '0')}';
 }
+
+class MealFlowContext {
+  final ProfileModel? profile;
+  final List<MentalConditionModel> conditions;
+  final DailyStateModel? dailyState;
+  final DailyNutrientTotal? dailyTotal;
+
+  MealFlowContext({
+    this.profile,
+    required this.conditions,
+    this.dailyState,
+    this.dailyTotal,
+  });
+}
+
+final mealFlowContextProvider =
+    FutureProvider.family<MealFlowContext, String>((ref, userId) async {
+  final today = _today();
+
+  // Load everything in parallel
+  final profileFuture = ProfileApiService.getProfileByUserId(userId);
+  final conditionsFuture =
+      MentalConditionApiService.getConditionsForUser(userId);
+  final dailyStateFuture = DailyStateApiService.getForDate(userId, today);
+  final totalsFuture =
+      ref.read(nutrientTotalsDaoProvider).getTotalsForDate(userId, today);
+
+  final results = await Future.wait([
+    profileFuture,
+    conditionsFuture,
+    dailyStateFuture,
+    totalsFuture,
+  ]);
+
+  return MealFlowContext(
+    profile: results[0] as ProfileModel?,
+    conditions: results[1] as List<MentalConditionModel>,
+    dailyState: results[2] as DailyStateModel?,
+    dailyTotal: results[3] as DailyNutrientTotal?,
+  );
+});

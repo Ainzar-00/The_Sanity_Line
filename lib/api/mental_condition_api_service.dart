@@ -26,4 +26,24 @@ class MentalConditionApiService {
       return false;
     }
   }
+
+  static Future<List<MentalConditionModel>> getConditionsForUser(
+      String userId) async {
+    try {
+      final response = await http.get(Uri.parse('$_base/user/$userId'));
+      if (response.statusCode == 200) {
+        final list = jsonDecode(response.body) as List<dynamic>;
+        return list
+            .map((e) =>
+                MentalConditionModel.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      print(
+          'Failed to get mental conditions. Status code: ${response.statusCode}');
+      return [];
+    } catch (e) {
+      print('Exception getting mental conditions: $e');
+      return [];
+    }
+  }
 }

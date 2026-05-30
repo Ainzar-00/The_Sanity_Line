@@ -5,15 +5,41 @@ import 'screens/authentication_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/nutrition_screen.dart';
 import 'screens/splash_screen.dart';
-
+import 'package:workmanager/workmanager.dart';
+import 'services/midnight_reset_service.dart';
+import 'database/app_database.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart'; 
+
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    if (task == MidnightResetService.taskName) {
+      final auth = FirebaseAuth.instance;
+      final userId = auth.currentUser?.uid;
+      if (userId != null) {
+        final db = AppDatabase();
+        await MidnightResetService.runReset(userId, db);
+      }
+      MidnightResetService.scheduleNext();
+    }
+    return true;
+  });
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  Workmanager().initialize(
+    callbackDispatcher,
+    isInDebugMode: false,
+  );
+  MidnightResetService.scheduleNext();
+
   runApp(const ProviderScope(child: MyApp()));
 }
 

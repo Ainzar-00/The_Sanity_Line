@@ -11,7 +11,7 @@ class DailyNutrientTotalsDao extends DatabaseAccessor<AppDatabase>
   /// Upsert: insert or replace on conflict (keyed by totalId).
   Future<void> insertOrReplaceTotals(
           DailyNutrientTotalsCompanion entry) =>
-      into(dailyNutrientTotals).insertOnConflictUpdate(entry);
+      into(dailyNutrientTotals).insert(entry, mode: InsertMode.insertOrReplace);
 
   /// Single row for a user+date, or null if none exists.
   Future<DailyNutrientTotal?> getTotalsForDate(
@@ -53,4 +53,36 @@ class DailyNutrientTotalsDao extends DatabaseAccessor<AppDatabase>
             ..where(
                 (t) => t.userId.equals(userId) & t.date.equals(date)))
           .go();
+
+  /// Update only target columns
+  Future<void> updateTargets(
+      String userId, String date, double fermented, double fiber, double mag, double omega, int plant, double tryp) async {
+    await (update(dailyNutrientTotals)
+          ..where((t) => t.userId.equals(userId) & t.date.equals(date)))
+        .write(DailyNutrientTotalsCompanion(
+      targetFermented: Value(fermented),
+      targetFiberG: Value(fiber),
+      targetMagnesiumMg: Value(mag),
+      targetOmega3G: Value(omega),
+      targetPlantSpecies: Value(plant),
+      targetTryptophanMg: Value(tryp),
+    ));
+  }
+
+  /// Update progress columns
+  Future<void> updateProgress(
+      String userId, String date, double fermented, double fiber, double mag, double omega, int plant, double tryp, double score) async {
+    await (update(dailyNutrientTotals)
+          ..where((t) => t.userId.equals(userId) & t.date.equals(date)))
+        .write(DailyNutrientTotalsCompanion(
+      fermentedServings: Value(fermented),
+      prebioticFiberG: Value(fiber),
+      magnesiumMg: Value(mag),
+      omega3G: Value(omega),
+      plantSpeciesCount: Value(plant),
+      tryptophanMg: Value(tryp),
+      overallScorePct: Value(score),
+      computedAt: Value(DateTime.now().toIso8601String()),
+    ));
+  }
 }

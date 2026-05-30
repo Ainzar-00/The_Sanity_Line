@@ -1,53 +1,25 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
-import 'package:drift/drift.dart' hide Column;
+import 'package:drift/drift.dart' as drift;
 
 import '../api/profile_api_service.dart';
+import '../api/daily_nutrient_totals_api_service.dart';
 import '../database/app_database.dart';
 import '../providers/database_provider.dart';
 import '../providers/onboarding_provider.dart';
 import '../widgets/character_chat_bubble.dart';
 import '../widgets/spotlight_tutorial.dart';
+import '../models/nutrition_targets.dart';
+import '../models/ai_meal_response_model.dart';
+import '../services/nutrient_target_service.dart';
+import '../services/plant_species_service.dart';
+import '../services/gemini_service.dart';
+import '../services/midnight_reset_service.dart';
 
-// ── Nutrition Targets (mutable defaults) ──────────────────────────────────────
-
-class NutritionTargets {
-  final double fermented;
-  final double fiberG;
-  final double magnesiumMg;
-  final double omega3G;
-  final int plantSpecies;
-  final double tryptophanMg;
-
-  const NutritionTargets({
-    this.fermented = 2.0,
-    this.fiberG = 28.0,
-    this.magnesiumMg = 350.0,
-    this.omega3G = 2.0,
-    this.plantSpecies = 5,
-    this.tryptophanMg = 400.0,
-  });
-
-  NutritionTargets copyWith({
-    double? fermented,
-    double? fiberG,
-    double? magnesiumMg,
-    double? omega3G,
-    int? plantSpecies,
-    double? tryptophanMg,
-  }) =>
-      NutritionTargets(
-        fermented: fermented ?? this.fermented,
-        fiberG: fiberG ?? this.fiberG,
-        magnesiumMg: magnesiumMg ?? this.magnesiumMg,
-        omega3G: omega3G ?? this.omega3G,
-        plantSpecies: plantSpecies ?? this.plantSpecies,
-        tryptophanMg: tryptophanMg ?? this.tryptophanMg,
-      );
-}
 
 // ── NutritionScreen ───────────────────────────────────────────────────────────
 
@@ -82,7 +54,20 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _showDrLindaBubble());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showDrLindaBubble();
+      _ensureTodayRow();
+    });
+  }
+
+  void _ensureTodayRow() async {
+    final db = ref.read(dbProvider);
+    final today = DateTime.now().toIso8601String().split('T').first;
+    final row = await db.dailyNutrientTotalsDao.getTotalsForDate(_userId, today);
+    if (row == null) {
+      // Midnight reset was missed (app killed). Run it now.
+      await MidnightResetService.runReset(_userId, db);
+    }
   }
 
   void _showDrLindaBubble() async {
@@ -408,7 +393,7 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _LogMealSheet(userId: _userId),
+      builder: (_) => _OwnMealFlowSheet(userId: _userId),
     );
   }
 
@@ -980,6 +965,7 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
                             name: meal.mealName ?? 'Unnamed Meal',
                             slot: meal.mealSlot ?? '',
                             description: _buildDescription(meal),
+                            onConsume: () => _consumeMeal(context, meal),
                           ),
                         ),
                       );
@@ -993,79 +979,282 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
       ),
     );
   }
+
+  Future<void> _consumeMeal(BuildContext context, Meal meal) async {
+    try {
+      final db = ref.read(dbProvider);
+      final uuid = const Uuid();
+      final logId = uuid.v4();
+      final now = DateTime.now();
+      final todayStr = now.toIso8601String().split('T').first;
+
+      // Insert Log
+      await db.mealLogDao.insertLog(MealLogsCompanion.insert(
+        logId: logId,
+        mealId: meal.mealId,
+        userId: widget.userId,
+        date: todayStr,
+        mealSlot: meal.mealSlot ?? 'snack',
+        loggedAt: now.toIso8601String(),
+      ));
+
+      // Recompute progress locally
+      final logsWithMeals = await db.mealLogDao.getLogsWithMeals(widget.userId, todayStr, todayStr);
+      int plantSum = 0;
+      double fiberSum = 0;
+      double fermSum = 0;
+      double omegaSum = 0;
+      double magSum = 0;
+      double trypSum = 0;
+
+      for (var pair in logsWithMeals) {
+        plantSum += pair.meal.plantSpeciesCount ?? 0;
+        fiberSum += pair.meal.prebioticFiberG ?? 0;
+        fermSum += pair.meal.fermentedServings ?? 0;
+        omegaSum += pair.meal.omega3G ?? 0;
+        magSum += pair.meal.magnesiumMg ?? 0;
+        trypSum += pair.meal.tryptophanMg ?? 0;
+      }
+
+      final dt = await db.dailyNutrientTotalsDao.getTotalsForDate(widget.userId, todayStr);
+      if (dt != null) {
+        final tPlant = dt.targetPlantSpecies ?? 5;
+        final tFiber = dt.targetFiberG ?? 28;
+        final tFerm = dt.targetFermented ?? 2;
+        final tOmega = dt.targetOmega3G ?? 2;
+        final tMag = dt.targetMagnesiumMg ?? 350;
+        final tTryp = dt.targetTryptophanMg ?? 400;
+
+        double score = 0;
+        score += (tPlant > 0 ? (plantSum / tPlant).clamp(0, 1) : 0);
+        score += (tFiber > 0 ? (fiberSum / tFiber).clamp(0, 1) : 0);
+        score += (tFerm > 0 ? (fermSum / tFerm).clamp(0, 1) : 0);
+        score += (tOmega > 0 ? (omegaSum / tOmega).clamp(0, 1) : 0);
+        score += (tMag > 0 ? (magSum / tMag).clamp(0, 1) : 0);
+        score += (tTryp > 0 ? (trypSum / tTryp).clamp(0, 1) : 0);
+        score /= 6.0;
+
+        await db.dailyNutrientTotalsDao.updateProgress(
+            widget.userId, todayStr, fermSum, fiberSum, magSum, omegaSum, plantSum, trypSum, score);
+
+        // Sync to server
+        final newDt = await db.dailyNutrientTotalsDao.getTotalsForDate(widget.userId, todayStr);
+        if (newDt != null) {
+          final body = {
+            'fermentedServings': newDt.fermentedServings,
+            'magnesiumMg': newDt.magnesiumMg,
+            'omega3G': newDt.omega3G,
+            'overallScorePct': newDt.overallScorePct,
+            'plantSpeciesCount': newDt.plantSpeciesCount,
+            'prebioticFiberG': newDt.prebioticFiberG,
+            'tryptophanMg': newDt.tryptophanMg,
+            'targetFermented': newDt.targetFermented,
+            'targetFiberG': newDt.targetFiberG,
+            'targetMagnesiumMg': newDt.targetMagnesiumMg,
+            'targetOmega3G': newDt.targetOmega3G,
+            'targetPlantSpecies': newDt.targetPlantSpecies,
+            'targetTryptophanMg': newDt.targetTryptophanMg,
+          };
+          final success = await DailyNutrientTotalsApiService.patchTotals(widget.userId, todayStr, body);
+          if (!success) {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setBool('sync_pending', true);
+          }
+        }
+      }
+
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${meal.mealName ?? 'Meal'} consumed!'),
+            backgroundColor: const Color(0xFF4C8C6A),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red.shade400,
+          ),
+        );
+      }
+    }
+  }
+
 }
 
-// ── Log Meal Bottom Sheet ─────────────────────────────────────────────────────
+// ── Log Meal Bottom Sheet (AI Flow) ──────────────────────────────────────────
 
-class _LogMealSheet extends ConsumerStatefulWidget {
+enum _OwnMealStage { input, loading, review, logging }
+
+class _OwnMealFlowSheet extends ConsumerStatefulWidget {
   final String userId;
-  const _LogMealSheet({required this.userId});
+  const _OwnMealFlowSheet({required this.userId});
 
   @override
-  ConsumerState<_LogMealSheet> createState() => _LogMealSheetState();
+  ConsumerState<_OwnMealFlowSheet> createState() => _OwnMealFlowSheetState();
 }
 
-class _LogMealSheetState extends ConsumerState<_LogMealSheet> {
-  String _selectedSlot = 'Breakfast';
-  final _mealController = TextEditingController();
-  final _detailsController = TextEditingController();
-  bool _saving = false;
+class _OwnMealFlowSheetState extends ConsumerState<_OwnMealFlowSheet> {
+  _OwnMealStage _stage = _OwnMealStage.input;
 
-  final List<String> _slots = [
-    'Breakfast',
-    'Lunch',
-    'Dinner',
-    'Snack'
-  ];
+  String _selectedSlot = 'Breakfast';
+  final _detailsController = TextEditingController();
+
+  final List<String> _slots = ['Breakfast', 'Lunch', 'Dinner', 'Snack'];
+
+  AiMealResponse? _aiResponse;
 
   @override
   void dispose() {
-    _mealController.dispose();
     _detailsController.dispose();
     super.dispose();
   }
 
-  Future<void> _save() async {
-    final mealName = _mealController.text.trim();
+  Future<void> _analyzeMeal() async {
     final mealDetails = _detailsController.text.trim();
-    if (mealName.isEmpty) return;
+    if (mealDetails.isEmpty) return;
 
-    setState(() => _saving = true);
+    setState(() => _stage = _OwnMealStage.loading);
+
     try {
-      const uuid = Uuid();
-      final now = DateTime.now();
+      // 1. Get Context
+      final contextFuture = ref.read(mealFlowContextProvider(widget.userId).future);
+      final ctx = await contextFuture;
+
+      final profile = ctx.profile;
+      if (profile == null) {
+        throw Exception("Profile not found.");
+      }
+
+      // 2. Compute targets & context hash
+      final targets = NutrientTargetService.computeTargets(
+          profile, ctx.conditions, ctx.dailyState);
+
+      final newHash = NutrientTargetService.buildContextHash(
+          widget.userId, profile, ctx.conditions, ctx.dailyState);
+
+      final prefs = await SharedPreferences.getInstance();
+      final oldHash = prefs.getString('nutrient_context_hash');
+
+      final db = ref.read(dbProvider);
+
+      if (ctx.dailyTotal == null) {
+        // Create today's row
+        final now = DateTime.now();
+        final today =
+            '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+        final uuid = const Uuid();
+        await db.dailyNutrientTotalsDao.insertOrReplaceTotals(
+          DailyNutrientTotalsCompanion.insert(
+            totalId: uuid.v4(),
+            userId: widget.userId,
+            date: today,
+            computedAt: now.toIso8601String(),
+            fermentedServings: const drift.Value(0.0),
+            magnesiumMg: const drift.Value(0.0),
+            omega3G: const drift.Value(0.0),
+            overallScorePct: const drift.Value(0.0),
+            plantSpeciesCount: const drift.Value(0),
+            prebioticFiberG: const drift.Value(0.0),
+            tryptophanMg: const drift.Value(0.0),
+            targetFermented: drift.Value(targets.fermented),
+            targetFiberG: drift.Value(targets.fiberG),
+            targetMagnesiumMg: drift.Value(targets.magnesiumMg),
+            targetOmega3G: drift.Value(targets.omega3G),
+            targetPlantSpecies: drift.Value(targets.plantSpecies),
+            targetTryptophanMg: drift.Value(targets.tryptophanMg),
+          ),
+        );
+      } else if (oldHash != newHash) {
+        // Update targets
+        final today = ctx.dailyTotal!.date;
+        await db.dailyNutrientTotalsDao.updateTargets(
+          widget.userId,
+          today,
+          targets.fermented,
+          targets.fiberG,
+          targets.magnesiumMg,
+          targets.omega3G,
+          targets.plantSpecies,
+          targets.tryptophanMg,
+        );
+      }
+
+      await prefs.setString('nutrient_context_hash', newHash);
+
+      // Re-fetch daily total to ensure we have the latest targets
+      final todayStr = DateTime.now().toIso8601String().split('T').first;
+      final dailyTotal = await db.dailyNutrientTotalsDao.getTotalsForDate(widget.userId, todayStr);
+
+      // 3. Plant Window
+      final plantWindow = await PlantSpeciesService.queryWindow(
+          db, widget.userId, targets.plantSpecies, dailyTotal?.plantSpeciesCount ?? 0);
+
+      // 4. Call AI
+      final aiResponse = await GeminiService.analyzeMeal(
+        profile: profile,
+        conditions: ctx.conditions,
+        dailyState: ctx.dailyState,
+        dailyTotal: dailyTotal,
+        plantWindow: plantWindow,
+        mealSlot: _selectedSlot.toLowerCase(),
+        userMealDescription: mealDetails,
+      );
+
+      setState(() {
+        _aiResponse = aiResponse;
+        _stage = _OwnMealStage.review;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _stage = _OwnMealStage.input);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not analyze your meal. Please try again. \nError: $e'),
+          backgroundColor: Colors.red.shade400,
+        ),
+      );
+    }
+  }
+
+  Future<void> _logMeal() async {
+    if (_aiResponse == null) return;
+    setState(() => _stage = _OwnMealStage.logging);
+
+    try {
+      final db = ref.read(dbProvider);
+      final uuid = const Uuid();
       final mealId = uuid.v4();
-      final logId = uuid.v4();
-      final today =
-          '${now.year}-${now.month.toString().padLeft(2, '0')}-'
-          '${now.day.toString().padLeft(2, '0')}';
-      final nowStr = now.toIso8601String();
-      final slot = _selectedSlot.toLowerCase();
 
-      await ref.read(mealDaoProvider).insertMeal(MealsCompanion(
-            mealId: Value(mealId),
-            userId: Value(widget.userId),
-            mealName: Value(mealName),
-            mealSlot: Value(slot),
-          ));
+      // Insert Meal
+      await db.mealDao.insertMeal(MealsCompanion.insert(
+        mealId: mealId,
+        userId: widget.userId,
+        mealName: drift.Value(_aiResponse!.mealName),
+        mealSlot: drift.Value(_aiResponse!.mealSlot),
+        plantSpeciesList: drift.Value(jsonEncode(_aiResponse!.plantSpeciesList)),
+        plantSpeciesCount: drift.Value(_aiResponse!.plantSpeciesCount),
+        fermentedServings: drift.Value(_aiResponse!.fermentedServings),
+        magnesiumMg: drift.Value(_aiResponse!.magnesiumMg),
+        omega3G: drift.Value(_aiResponse!.omega3G),
+        prebioticFiberG: drift.Value(_aiResponse!.prebioticFiberG),
+        tryptophanMg: drift.Value(_aiResponse!.tryptophanMg),
+      ));
 
-      await ref.read(mealLogDaoProvider).insertLog(MealLogsCompanion(
-            logId: Value(logId),
-            mealId: Value(mealId),
-            userId: Value(widget.userId),
-            date: Value(today),
-            mealSlot: Value(slot),
-            loggedAt: Value(nowStr),
-          ));
+      // End of insertion
 
       if (mounted) Navigator.pop(context);
     } catch (e) {
-      setState(() => _saving = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error saving meal: $e')),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _stage = _OwnMealStage.review);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error saving meal: $e')),
+      );
     }
   }
 
@@ -1080,8 +1269,7 @@ class _LogMealSheetState extends ConsumerState<_LogMealSheet> {
       ),
       decoration: const BoxDecoration(
         color: Color(0xFFEDF4E7),
-        borderRadius:
-            BorderRadius.vertical(top: Radius.circular(28)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -1099,137 +1287,276 @@ class _LogMealSheetState extends ConsumerState<_LogMealSheet> {
               ),
             ),
           ),
-          const Text(
-            'Log a Meal',
-            style: TextStyle(
-              fontFamily: 'Georgia',
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1C5F5F),
-            ),
-          ),
-          const SizedBox(height: 20),
-          // Meal slot chips
-          Wrap(
-            spacing: 8,
-            children: _slots.map((slot) {
-              final selected = slot == _selectedSlot;
-              return ChoiceChip(
-                label: Text(slot),
-                selected: selected,
-                onSelected: (_) =>
-                    setState(() => _selectedSlot = slot),
-                selectedColor: const Color(0xFF4C8C6A),
-                backgroundColor: const Color(0xFFDDE8D0),
-                labelStyle: TextStyle(
-                  color: selected
-                      ? Colors.white
-                      : const Color(0xFF1C5F5F),
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20)),
-                side: BorderSide.none,
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 18),
-          // Meal name field
-          TextField(
-            controller: _mealController,
-            textCapitalization: TextCapitalization.sentences,
-            decoration: InputDecoration(
-              labelText: 'Meal name',
-              labelStyle:
-                  const TextStyle(color: Color(0xFF4C7A5A)),
-              filled: true,
-              fillColor: const Color(0xFFDDE8D0),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              prefixIcon: const Icon(Icons.restaurant_menu,
-                  color: Color(0xFF4C8C6A)),
-            ),
-            cursorColor: const Color(0xFF1C5F5F),
-          ),
-          const SizedBox(height: 16),
-          // Meal details field
-          TextField(
-            controller: _detailsController,
-            textCapitalization: TextCapitalization.sentences,
-            maxLines: 3,
-            decoration: InputDecoration(
-              labelText: 'Meal details',
-              alignLabelWithHint: true,
-              labelStyle:
-                  const TextStyle(color: Color(0xFF4C7A5A)),
-              filled: true,
-              fillColor: const Color(0xFFDDE8D0),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide.none,
-              ),
-              prefixIcon: const Padding(
-                padding: EdgeInsets.only(bottom: 32),
-                child: Icon(Icons.description,
-                    color: Color(0xFF4C8C6A)),
-              ),
-            ),
-            cursorColor: const Color(0xFF1C5F5F),
-          ),
-          const SizedBox(height: 24),
-          // Save button
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF4C8C6A), Color(0xFF1C5F5F)],
-                  begin: Alignment.centerLeft,
-                  end: Alignment.centerRight,
-                ),
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                    color:
-                        const Color(0xFF1C5F5F).withOpacity(0.3),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: TextButton(
-                onPressed: _saving ? null : _save,
-                style: TextButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14)),
-                ),
-                child: _saving
-                    ? const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2,
-                        ),
-                      )
-                    : const Text(
-                        'Save Meal',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontFamily: 'Georgia',
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-              ),
-            ),
-          ),
+          if (_stage == _OwnMealStage.input) _buildInputStage(),
+          if (_stage == _OwnMealStage.loading) _buildLoadingStage('Analysing your meal...'),
+          if (_stage == _OwnMealStage.review) _buildReviewStage(),
+          if (_stage == _OwnMealStage.logging) _buildLoadingStage('Saving meal...'),
         ],
       ),
+    );
+  }
+
+  Widget _buildInputStage() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Log a Meal',
+          style: TextStyle(
+            fontFamily: 'Georgia',
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1C5F5F),
+          ),
+        ),
+        const SizedBox(height: 20),
+        // Meal slot chips
+        Wrap(
+          spacing: 8,
+          children: _slots.map((slot) {
+            final selected = slot == _selectedSlot;
+            return ChoiceChip(
+              label: Text(slot),
+              selected: selected,
+              onSelected: (_) => setState(() => _selectedSlot = slot),
+              selectedColor: const Color(0xFF4C8C6A),
+              backgroundColor: const Color(0xFFDDE8D0),
+              labelStyle: TextStyle(
+                color: selected ? Colors.white : const Color(0xFF1C5F5F),
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              side: BorderSide.none,
+            );
+          }).toList(),
+        ),
+        const SizedBox(height: 18),
+        // Meal details field
+        TextField(
+          controller: _detailsController,
+          textCapitalization: TextCapitalization.sentences,
+          maxLines: 4,
+          decoration: InputDecoration(
+            labelText: 'What did you eat?',
+            alignLabelWithHint: true,
+            labelStyle: const TextStyle(color: Color(0xFF4C7A5A)),
+            filled: true,
+            fillColor: const Color(0xFFDDE8D0),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(12),
+              borderSide: BorderSide.none,
+            ),
+          ),
+          cursorColor: const Color(0xFF1C5F5F),
+        ),
+        const SizedBox(height: 24),
+        // Save button
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF4C8C6A), Color(0xFF1C5F5F)],
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+              ),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF1C5F5F).withOpacity(0.3),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: TextButton(
+              onPressed: _analyzeMeal,
+              style: TextButton.styleFrom(
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              ),
+              child: const Text(
+                'Analyse',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontFamily: 'Georgia',
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLoadingStage(String message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40.0),
+        child: Column(
+          children: [
+            const CircularProgressIndicator(color: Color(0xFF4C8C6A)),
+            const SizedBox(height: 20),
+            Text(
+              message,
+              style: const TextStyle(
+                fontFamily: 'Georgia',
+                fontSize: 18,
+                color: Color(0xFF1C5F5F),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReviewStage() {
+    final ai = _aiResponse!;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                ai.mealName,
+                style: const TextStyle(
+                  fontFamily: 'Georgia',
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1C5F5F),
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF4C8C6A).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                ai.mealSlot.toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF4C8C6A),
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        // Grid
+        Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(8),
+            color: Colors.white,
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  _buildGridCell('+${ai.plantSpeciesCount}', 'PLANTS'),
+                  _buildVerticalDivider(),
+                  _buildGridCell(ai.fermentedServings > 0 ? 'YES' : 'NO', 'FERMENTED'),
+                  _buildVerticalDivider(),
+                  _buildGridCell('${ai.prebioticFiberG.toStringAsFixed(0)}g', 'FIBER'),
+                ],
+              ),
+              const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+              Row(
+                children: [
+                  _buildGridCell('${ai.omega3G.toStringAsFixed(0)}mg', 'OMEGA-3'),
+                  _buildVerticalDivider(),
+                  _buildGridCell('${ai.magnesiumMg.toStringAsFixed(0)}mg', 'MAGNESIUM'),
+                  _buildVerticalDivider(),
+                  _buildGridCell('${ai.tryptophanMg.toStringAsFixed(0)}mg', 'TRYPTOPHAN'),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        Text(
+          ai.gutBrainRationale,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF4C7A5A),
+            height: 1.5,
+          ),
+        ),
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            Expanded(
+              child: TextButton(
+                onPressed: () => Navigator.pop(context),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    side: const BorderSide(color: Color(0xFF4C8C6A)),
+                  ),
+                ),
+                child: const Text(
+                  'Discard',
+                  style: TextStyle(
+                    color: Color(0xFF4C8C6A),
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              flex: 2,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF4C8C6A), Color(0xFF1C5F5F)],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF1C5F5F).withOpacity(0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: TextButton(
+                  onPressed: _logMeal,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: const Text(
+                    'Save Meal',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontFamily: 'Georgia',
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -1242,12 +1569,14 @@ class _MealCard extends StatelessWidget {
   final String name;
   final String description;
   final String slot;
+  final VoidCallback? onConsume;
 
   const _MealCard({
     this.imageUrl,
     required this.name,
     required this.description,
     required this.slot,
+    this.onConsume,
   });
 
   @override
@@ -1345,7 +1674,7 @@ class _MealCard extends StatelessWidget {
                   Align(
                     alignment: Alignment.bottomRight,
                     child: InkWell(
-                      onTap: () {},
+                      onTap: onConsume,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 16, vertical: 6),

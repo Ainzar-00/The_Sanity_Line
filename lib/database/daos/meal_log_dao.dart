@@ -35,4 +35,30 @@ class MealLogDao extends DatabaseAccessor<AppDatabase>
                 t.date.isBiggerOrEqualValue(from) &
                 t.date.isSmallerOrEqualValue(to)))
           .get();
+
+  /// Join logs with meals to get nutrient info
+  Future<List<MealWithLog>> getLogsWithMeals(
+      String userId, String from, String to) async {
+    final query = select(mealLogs).join([
+      innerJoin(db.meals, db.meals.mealId.equalsExp(mealLogs.mealId))
+    ])
+      ..where(mealLogs.userId.equals(userId) &
+          mealLogs.date.isBiggerOrEqualValue(from) &
+          mealLogs.date.isSmallerOrEqualValue(to));
+
+    final rows = await query.get();
+    return rows.map((row) {
+      return MealWithLog(
+        mealLog: row.readTable(mealLogs),
+        meal: row.readTable(db.meals),
+      );
+    }).toList();
+  }
+}
+
+class MealWithLog {
+  final MealLog mealLog;
+  final Meal meal;
+
+  MealWithLog({required this.mealLog, required this.meal});
 }

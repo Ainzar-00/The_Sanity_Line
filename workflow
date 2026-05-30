@@ -28,3 +28,5 @@ keep todays data localy
 problemes :
 
 authentification enforcment (firebase && server)
+
+

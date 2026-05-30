@@ -45,7 +45,7 @@ class MorningCheckinModel {
   factory MorningCheckinModel.fromJson(Map<String, dynamic> json) {
     return MorningCheckinModel(
       checkinId: json['checkinId'] as String?,
-      userId: json['userId'] as String,
+      userId: json['userId'] as String? ?? '',
       date: DateTime.parse(json['date'] as String),
       mood: json['mood'] as int?,
       energy: json['energy'] as int?,
