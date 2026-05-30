@@ -30,6 +30,9 @@ class OnboardingPillars {
     appIntro: '/onboarding/app-intro',
     nutrition: '/onboarding/nutrition',
   };
+
+  /// Returns the route for [pillar], or null if not mapped.
+  static String? routeForPillar(String pillar) => _pillarRoute[pillar];
 }
 
 // ── SharedPreferences key ──────────────────────────────────────────────────────

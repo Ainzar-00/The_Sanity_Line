@@ -125,7 +125,7 @@ class AuthService {
           return AuthResult.error('No account found. Please sign up first.');
         }
 
-        // UID exists — save it and go home
+        // UID exists — save it and proceed to home
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('uid', uid);
         await UserApiService.updateLastSeen(uid);
@@ -135,7 +135,7 @@ class AuthService {
 
       // ── Sign-up ───────────────────────────────────────────────────────────
       if (accountExistsInFirebase) {
-        // UID already exists — just log them in
+        // UID already exists — resume session
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('uid', uid);
         await UserApiService.updateLastSeen(uid);
@@ -198,17 +198,11 @@ class AuthService {
   // 2. If missing, fetch finishedOnboarding from the server and cache locally.
 
   static Future<void> _restoreOnboarding(String uid, WidgetRef ref) async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('onboarding_finished_pillars');
+    // Always fetch fresh state from the server so we don't rely on stale prefs.
+    // The server is the source of truth for completed onboarding pillars.
     final notifier = ref.read(onboardingProvider.notifier);
-
-    if (raw != null && raw.isNotEmpty) {
-      await notifier.loadFromPrefs();
-    } else {
-      // Not cached — fetch from server and cache
-      final pillars = await ProfileApiService.getFinishedPillars(uid);
-      await notifier.loadFromServer(pillars);
-    }
+    final pillars = await ProfileApiService.getFinishedPillars(uid);
+    await notifier.loadFromServer(pillars);
   }
 
   // ── Error mapping ──────────────────────────────────────────────────────────

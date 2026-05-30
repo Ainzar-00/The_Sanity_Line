@@ -73,7 +73,6 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
   final GlobalKey _fabKey = GlobalKey();
   final GlobalKey _mealsListKey = GlobalKey();
   final GlobalKey _sourceDialogKey = GlobalKey();
-  final GlobalKey _mealDetailsDialogKey = GlobalKey();
 
   /// Mutable targets — can be adjusted without touching the DB schema.
   NutritionTargets _targets = const NutritionTargets();
@@ -89,9 +88,10 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
   void _showDrLindaBubble() async {
     if (!mounted || _drLindaShown) return;
 
-    // If the nutrition onboarding is already complete (from provider or prefs),
-    // skip the entire tutorial without showing anything.
+    // Skip if the professor's intro (app_intro) OR the full nutrition
+    // onboarding has already been completed.
     final finished = ref.read(onboardingProvider);
+    if (finished.contains(OnboardingPillars.appIntro)) return;
     if (finished.contains(OnboardingPillars.nutrition)) return;
 
     final prefs = await SharedPreferences.getInstance();
@@ -184,8 +184,10 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
         imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
         text: 'Here is where your logged and suggested meals live. It\'s your food diary!',
         onStart: () async {
+          // Ensure no dummy meal is visible during the list-intro step
           setState(() {
             _selectedIndex = 1;
+            _showTutorialDummyMeal = false;
           });
           await Future.delayed(const Duration(milliseconds: 300));
         },
@@ -213,14 +215,16 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
         text: 'After adding a meal, this is how it will be displayed in your list.',
         onStart: () async {
           setState(() => _showTutorialDummyMeal = true);
-          await Future.delayed(const Duration(milliseconds: 200));
+          // Give the widget tree time to rebuild and show the dummy card
+          await Future.delayed(const Duration(milliseconds: 500));
         },
         onComplete: () async {
           // Keep dummy visible through the details step — turned off in that step's onComplete
         },
       ),
       TutorialStep(
-        targetKey: _mealDetailsDialogKey,
+        // No targetKey — the dialog is in a separate overlay so we can't
+        // spotlight it by key. A centered bubble works best here.
         imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
         text: 'Tapping on a meal brings up this detailed card. It breaks down exactly what nutrients you got from it!',
         onStart: () async {
@@ -235,7 +239,9 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
             magnesiumMg: 60,
             tryptophanMg: 100,
           );
-          _showMealDetailsDialog(context, dummyMeal, dialogKey: _mealDetailsDialogKey);
+          _showMealDetailsDialog(context, dummyMeal);
+          // Wait for the dialog to render before the spotlight redraws
+          await Future.delayed(const Duration(milliseconds: 300));
         },
         onComplete: () async {
           // Close the details dialog and hide the dummy meal
