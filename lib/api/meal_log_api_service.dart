@@ -27,4 +27,21 @@ class MealLogApiService {
       return false;
     }
   }
+  static Future<bool> createMealLog(Map<String, dynamic> data) async {
+    try {
+      final response = await http.post(
+        Uri.parse(_base),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(data),
+      );
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return true;
+      }
+      print('[MealLogApiService] createMealLog failed: ${response.statusCode}');
+      return false;
+    } catch (e) {
+      print('[MealLogApiService] Exception creating meal log: $e');
+      return false;
+    }
+  }
 }

@@ -1,26 +1,136 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+/// Matches the backend `DailyNutrientTotalRequest` DTO exactly.
 class DailyNutrientTotalsApiService {
   static const String _base = 'http://192.168.1.200:8080/api/v1/daily-totals';
 
-  static Future<bool> patchTotals(
-      String userId, String date, Map<String, dynamic> body) async {
+  /// Build a `DailyNutrientTotalRequest`-compatible body map.
+  static Map<String, dynamic> _buildBody({
+    required String userId,
+    required String date,
+    int? plantSpeciesCount,
+    double? fermentedServings,
+    double? prebioticFiberG,
+    double? omega3G,
+    double? magnesiumMg,
+    double? tryptophanMg,
+    double? overallScorePct,
+    int? targetPlantSpecies,
+    double? targetFermented,
+    double? targetFiberG,
+    double? targetOmega3G,
+    double? targetMagnesiumMg,
+    double? targetTryptophanMg,
+  }) =>
+      {
+        'userId': userId,
+        'date': date,
+        if (plantSpeciesCount != null) 'plantSpeciesCount': plantSpeciesCount,
+        if (fermentedServings != null) 'fermentedServings': fermentedServings,
+        if (prebioticFiberG != null) 'prebioticFiberG': prebioticFiberG,
+        if (omega3G != null) 'omega3G': omega3G,
+        if (magnesiumMg != null) 'magnesiumMg': magnesiumMg,
+        if (tryptophanMg != null) 'tryptophanMg': tryptophanMg,
+        if (overallScorePct != null) 'overallScorePct': overallScorePct,
+        if (targetPlantSpecies != null) 'targetPlantSpecies': targetPlantSpecies,
+        if (targetFermented != null) 'targetFermented': targetFermented,
+        if (targetFiberG != null) 'targetFiberG': targetFiberG,
+        if (targetOmega3G != null) 'targetOmega3G': targetOmega3G,
+        if (targetMagnesiumMg != null) 'targetMagnesiumMg': targetMagnesiumMg,
+        if (targetTryptophanMg != null) 'targetTryptophanMg': targetTryptophanMg,
+      };
+
+  /// PATCH today's row; if not found (404) automatically POST to create it.
+  /// Returns true on success.
+  static Future<bool> upsertTotals({
+    required String userId,
+    required String date,
+    int? plantSpeciesCount,
+    double? fermentedServings,
+    double? prebioticFiberG,
+    double? omega3G,
+    double? magnesiumMg,
+    double? tryptophanMg,
+    double? overallScorePct,
+    int? targetPlantSpecies,
+    double? targetFermented,
+    double? targetFiberG,
+    double? targetOmega3G,
+    double? targetMagnesiumMg,
+    double? targetTryptophanMg,
+  }) async {
+    final body = _buildBody(
+      userId: userId,
+      date: date,
+      plantSpeciesCount: plantSpeciesCount,
+      fermentedServings: fermentedServings,
+      prebioticFiberG: prebioticFiberG,
+      omega3G: omega3G,
+      magnesiumMg: magnesiumMg,
+      tryptophanMg: tryptophanMg,
+      overallScorePct: overallScorePct,
+      targetPlantSpecies: targetPlantSpecies,
+      targetFermented: targetFermented,
+      targetFiberG: targetFiberG,
+      targetOmega3G: targetOmega3G,
+      targetMagnesiumMg: targetMagnesiumMg,
+      targetTryptophanMg: targetTryptophanMg,
+    );
+
     try {
-      final response = await http.patch(
+      // Try PATCH first
+      final patchResponse = await http.patch(
         Uri.parse('$_base/user/$userId/date/$date'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(body),
       );
-      if (response.statusCode == 200 || response.statusCode == 204) {
+
+      if (patchResponse.statusCode == 200 || patchResponse.statusCode == 204) {
         return true;
       }
-      print(
-          '[DailyNutrientTotalsApiService] patchTotals failed: ${response.statusCode}');
+
+      // Row doesn't exist yet — POST to create it
+      if (patchResponse.statusCode == 404) {
+        final postResponse = await http.post(
+          Uri.parse(_base),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(body),
+        );
+        if (postResponse.statusCode == 200 || postResponse.statusCode == 201) {
+          return true;
+        }
+        print('[DailyNutrientTotalsApiService] POST failed: ${postResponse.statusCode} ${postResponse.body}');
+        return false;
+      }
+
+      print('[DailyNutrientTotalsApiService] PATCH failed: ${patchResponse.statusCode} ${patchResponse.body}');
       return false;
     } catch (e) {
-      print('[DailyNutrientTotalsApiService] Exception patching totals: $e');
+      print('[DailyNutrientTotalsApiService] Exception: $e');
       return false;
     }
+  }
+
+  /// Legacy helper kept for backward-compat with OfflineSyncService.
+  static Future<bool> patchTotals(
+      String userId, String date, Map<String, dynamic> body) async {
+    return upsertTotals(
+      userId: userId,
+      date: date,
+      plantSpeciesCount: body['plantSpeciesCount'] as int?,
+      fermentedServings: (body['fermentedServings'] as num?)?.toDouble(),
+      prebioticFiberG: (body['prebioticFiberG'] as num?)?.toDouble(),
+      omega3G: (body['omega3G'] as num?)?.toDouble(),
+      magnesiumMg: (body['magnesiumMg'] as num?)?.toDouble(),
+      tryptophanMg: (body['tryptophanMg'] as num?)?.toDouble(),
+      overallScorePct: (body['overallScorePct'] as num?)?.toDouble(),
+      targetPlantSpecies: body['targetPlantSpecies'] as int?,
+      targetFermented: (body['targetFermented'] as num?)?.toDouble(),
+      targetFiberG: (body['targetFiberG'] as num?)?.toDouble(),
+      targetOmega3G: (body['targetOmega3G'] as num?)?.toDouble(),
+      targetMagnesiumMg: (body['targetMagnesiumMg'] as num?)?.toDouble(),
+      targetTryptophanMg: (body['targetTryptophanMg'] as num?)?.toDouble(),
+    );
   }
 }

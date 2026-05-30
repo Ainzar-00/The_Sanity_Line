@@ -54,6 +54,13 @@ class MealLogDao extends DatabaseAccessor<AppDatabase>
       );
     }).toList();
   }
+
+  Future<List<MealLog>> getUnsyncedLogs() =>
+      (select(mealLogs)..where((t) => t.isSynced.equals(false))).get();
+
+  Future<void> markAsSynced(String logId) =>
+      (update(mealLogs)..where((t) => t.logId.equals(logId)))
+          .write(const MealLogsCompanion(isSynced: Value(true)));
 }
 
 class MealWithLog {

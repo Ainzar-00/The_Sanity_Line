@@ -7,7 +7,10 @@ import 'screens/nutrition_screen.dart';
 import 'screens/splash_screen.dart';
 import 'package:workmanager/workmanager.dart';
 import 'services/midnight_reset_service.dart';
+import 'services/offline_sync_service.dart';
 import 'database/app_database.dart';
+import 'providers/database_provider.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart'; 
@@ -43,8 +46,25 @@ void main() async {
   runApp(const ProviderScope(child: MyApp()));
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends ConsumerStatefulWidget {
   const MyApp({super.key});
+
+  @override
+  ConsumerState<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends ConsumerState<MyApp> {
+  @override
+  void initState() {
+    super.initState();
+    // Listen to network changes to trigger offline sync
+    Connectivity().onConnectivityChanged.listen((results) {
+      if (!results.contains(ConnectivityResult.none)) {
+        final db = ref.read(dbProvider);
+        OfflineSyncService.attemptSync(db);
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

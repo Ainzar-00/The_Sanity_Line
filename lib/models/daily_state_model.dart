@@ -88,13 +88,13 @@ class DailyStateModel {
 
   Map<String, dynamic> toJson() {
     return {
-      'stateId': stateId,
       'userId': userId,
       'date': date.toIso8601String().split('T').first,
       if (currentMood != null) 'currentMood': currentMood,
       if (energyLevel != null) 'energyLevel': energyLevel,
       if (hungerLevel != null) 'hungerLevel': hungerLevel,
-      if (physicalTraining != null) 'physicalTraining': physicalTraining,
+      // Always send as boolean — DailyStateRequest has physicalTraining: Boolean = false
+      'physicalTraining': physicalTraining ?? false,
       if (sleepHoursPrevNight != null)
         'sleepHoursPrevNight': sleepHoursPrevNight,
       if (sleepQuality != null) 'sleepQuality': sleepQuality,
@@ -103,19 +103,7 @@ class DailyStateModel {
         'trainingDurationMin': trainingDurationMin,
       if (trainingIntensity != null) 'trainingIntensity': trainingIntensity,
       if (wokeUpFeeling != null) 'wokeUpFeeling': wokeUpFeeling,
-      if (recordedAt != null) 'recordedAt': recordedAt?.toIso8601String(),
       if (trainingType != null) 'trainingType': trainingType,
-      if (alcoholPrevNight != null) 'alcoholPrevNight': alcoholPrevNight,
-      if (aversion != null) 'aversion': aversion,
-      if (caffeineTodayMg != null) 'caffeineTodayMg': caffeineTodayMg,
-      if (cookTimeAvailableMin != null)
-        'cookTimeAvailableMin': cookTimeAvailableMin,
-      if (craving != null) 'craving': craving,
-      if (currentDigestion != null) 'currentDigestion': currentDigestion,
-      if (hoursSinceLastMeal != null)
-        'hoursSinceLastMeal': hoursSinceLastMeal,
-      if (requestedAt != null) 'requestedAt': requestedAt?.toIso8601String(),
-      if (waterIntakeMl != null) 'waterIntakeMl': waterIntakeMl,
     };
   }
 }

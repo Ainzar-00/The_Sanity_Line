@@ -69,6 +69,9 @@ class Meals extends Table {
   RealColumn get prebioticFiberG => real().nullable()();
   RealColumn get tryptophanMg => real().nullable()();
 
+  /// Flag for offline sync. True if successfully synced to the backend.
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {mealId};
 }
@@ -86,6 +89,9 @@ class MealLogs extends Table {
   TextColumn get date => text()(); // yyyy-MM-dd
   TextColumn get mealSlot => text()(); // breakfast|lunch|dinner|snack
   TextColumn get loggedAt => text()(); // ISO 8601 datetime
+
+  /// Flag for offline sync. True if successfully synced to the backend.
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
 
   @override
   Set<Column> get primaryKey => {logId};
@@ -115,6 +121,9 @@ class DailyNutrientTotals extends Table {
   IntColumn get targetPlantSpecies => integer().nullable()();
   RealColumn get targetTryptophanMg => real().nullable()();
 
+  /// Flag for offline sync. True if successfully synced to the backend.
+  BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {totalId};
 }
@@ -130,10 +139,21 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) async {
+          await m.createAll();
+        },
+        onUpgrade: (m, from, to) async {
+          if (from < 2) {
+            // Add isSynced column to Meals, MealLogs, and DailyNutrientTotals
+            await m.addColumn(meals, meals.isSynced);
+            await m.addColumn(mealLogs, mealLogs.isSynced);
+            await m.addColumn(dailyNutrientTotals, dailyNutrientTotals.isSynced);
+          }
+        },
         beforeOpen: (details) async {
           // Enable FK enforcement on every connection open.
           await customStatement('PRAGMA foreign_keys = ON');

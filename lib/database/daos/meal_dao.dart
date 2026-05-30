@@ -46,4 +46,11 @@ class MealDao extends DatabaseAccessor<AppDatabase> with _$MealDaoMixin {
       await (delete(meals)..where((t) => t.mealId.equals(mealId))).go();
     });
   }
+
+  Future<List<Meal>> getUnsyncedMeals() =>
+      (select(meals)..where((t) => t.isSynced.equals(false))).get();
+
+  Future<void> markAsSynced(String mealId) =>
+      (update(meals)..where((t) => t.mealId.equals(mealId)))
+          .write(const MealsCompanion(isSynced: Value(true)));
 }

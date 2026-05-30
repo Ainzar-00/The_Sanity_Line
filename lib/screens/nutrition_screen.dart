@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import 'package:drift/drift.dart' as drift;
 
 import '../api/profile_api_service.dart';
+import '../api/meal_log_api_service.dart';
 import '../api/daily_nutrient_totals_api_service.dart';
 import '../database/app_database.dart';
 import '../providers/database_provider.dart';
@@ -223,6 +224,7 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
             omega3G: 450,
             magnesiumMg: 60,
             tryptophanMg: 100,
+            isSynced: false,
           );
           _showMealDetailsDialog(context, dummyMeal);
           // Wait for the dialog to render before the spotlight redraws
@@ -988,7 +990,7 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
       final now = DateTime.now();
       final todayStr = now.toIso8601String().split('T').first;
 
-      // Insert Log
+      // ── 1. Insert log locally (isSynced = false until confirmed) ──────────
       await db.mealLogDao.insertLog(MealLogsCompanion.insert(
         logId: logId,
         mealId: meal.mealId,
@@ -998,8 +1000,9 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
         loggedAt: now.toIso8601String(),
       ));
 
-      // Recompute progress locally
-      final logsWithMeals = await db.mealLogDao.getLogsWithMeals(widget.userId, todayStr, todayStr);
+      // ── 2. Recompute cumulative nutrient progress from all today's logs ───
+      final logsWithMeals =
+          await db.mealLogDao.getLogsWithMeals(widget.userId, todayStr, todayStr);
       int plantSum = 0;
       double fiberSum = 0;
       double fermSum = 0;
@@ -1007,7 +1010,7 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
       double magSum = 0;
       double trypSum = 0;
 
-      for (var pair in logsWithMeals) {
+      for (final pair in logsWithMeals) {
         plantSum += pair.meal.plantSpeciesCount ?? 0;
         fiberSum += pair.meal.prebioticFiberG ?? 0;
         fermSum += pair.meal.fermentedServings ?? 0;
@@ -1016,16 +1019,22 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
         trypSum += pair.meal.tryptophanMg ?? 0;
       }
 
-      final dt = await db.dailyNutrientTotalsDao.getTotalsForDate(widget.userId, todayStr);
-      if (dt != null) {
-        final tPlant = dt.targetPlantSpecies ?? 5;
-        final tFiber = dt.targetFiberG ?? 28;
-        final tFerm = dt.targetFermented ?? 2;
-        final tOmega = dt.targetOmega3G ?? 2;
-        final tMag = dt.targetMagnesiumMg ?? 350;
-        final tTryp = dt.targetTryptophanMg ?? 400;
+      // ── 3. Update local daily totals row ──────────────────────────────────
+      final dt =
+          await db.dailyNutrientTotalsDao.getTotalsForDate(widget.userId, todayStr);
 
-        double score = 0;
+      double score = 0;
+      int tPlant = 5;
+      double tFiber = 28, tFerm = 2, tOmega = 2, tMag = 350, tTryp = 400;
+
+      if (dt != null) {
+        tPlant = dt.targetPlantSpecies ?? 5;
+        tFiber = dt.targetFiberG ?? 28;
+        tFerm = dt.targetFermented ?? 2;
+        tOmega = dt.targetOmega3G ?? 2;
+        tMag = dt.targetMagnesiumMg ?? 350;
+        tTryp = dt.targetTryptophanMg ?? 400;
+
         score += (tPlant > 0 ? (plantSum / tPlant).clamp(0, 1) : 0);
         score += (tFiber > 0 ? (fiberSum / tFiber).clamp(0, 1) : 0);
         score += (tFerm > 0 ? (fermSum / tFerm).clamp(0, 1) : 0);
@@ -1035,38 +1044,66 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
         score /= 6.0;
 
         await db.dailyNutrientTotalsDao.updateProgress(
-            widget.userId, todayStr, fermSum, fiberSum, magSum, omegaSum, plantSum, trypSum, score);
-
-        // Sync to server
-        final newDt = await db.dailyNutrientTotalsDao.getTotalsForDate(widget.userId, todayStr);
-        if (newDt != null) {
-          final body = {
-            'fermentedServings': newDt.fermentedServings,
-            'magnesiumMg': newDt.magnesiumMg,
-            'omega3G': newDt.omega3G,
-            'overallScorePct': newDt.overallScorePct,
-            'plantSpeciesCount': newDt.plantSpeciesCount,
-            'prebioticFiberG': newDt.prebioticFiberG,
-            'tryptophanMg': newDt.tryptophanMg,
-            'targetFermented': newDt.targetFermented,
-            'targetFiberG': newDt.targetFiberG,
-            'targetMagnesiumMg': newDt.targetMagnesiumMg,
-            'targetOmega3G': newDt.targetOmega3G,
-            'targetPlantSpecies': newDt.targetPlantSpecies,
-            'targetTryptophanMg': newDt.targetTryptophanMg,
-          };
-          final success = await DailyNutrientTotalsApiService.patchTotals(widget.userId, todayStr, body);
-          if (!success) {
-            final prefs = await SharedPreferences.getInstance();
-            await prefs.setBool('sync_pending', true);
-          }
-        }
+            widget.userId, todayStr, fermSum, fiberSum, magSum, omegaSum,
+            plantSum, trypSum, score);
       }
+
+      // ── 4. Try to push meal log to server immediately ─────────────────────
+      final logPayload = <String, dynamic>{
+        'userId': widget.userId,
+        'date': todayStr,
+        'mealSlot': meal.mealSlot ?? 'snack',
+        'plantSpeciesCount': meal.plantSpeciesCount,
+        'fermentedServings': meal.fermentedServings,
+        'prebioticFiberG': meal.prebioticFiberG,
+        'omega3G': meal.omega3G,
+        'magnesiumMg': meal.magnesiumMg,
+        'tryptophanMg': meal.tryptophanMg,
+        if (meal.plantSpeciesList != null)
+          'plantSpeciesList': jsonDecode(meal.plantSpeciesList!),
+        if (meal.suggestionId != null) 'suggestionId': meal.suggestionId,
+        'triggerFoodFlag': false,
+      };
+
+      final logSynced = await MealLogApiService.createMealLog(logPayload);
+
+      if (logSynced) {
+        // Mark log as synced in local DB
+        await db.mealLogDao.markAsSynced(logId);
+
+        // ── 5. Push daily totals (PATCH or POST) using typed DTO ─────────────
+        await DailyNutrientTotalsApiService.upsertTotals(
+          userId: widget.userId,
+          date: todayStr,
+          plantSpeciesCount: plantSum,
+          fermentedServings: fermSum,
+          prebioticFiberG: fiberSum,
+          omega3G: omegaSum,
+          magnesiumMg: magSum,
+          tryptophanMg: trypSum,
+          overallScorePct: score,
+          targetPlantSpecies: tPlant,
+          targetFermented: tFerm,
+          targetFiberG: tFiber,
+          targetOmega3G: tOmega,
+          targetMagnesiumMg: tMag,
+          targetTryptophanMg: tTryp,
+        );
+        if (dt != null) {
+          await db.dailyNutrientTotalsDao.markAsSynced(dt.totalId);
+        }
+
+        // ── 6. Remove the meal card from the list ─────────────────────────────
+        await db.mealDao.deleteMeal(meal.mealId);
+      }
+      // If offline, the log stays with isSynced=false and will sync later.
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('${meal.mealName ?? 'Meal'} consumed!'),
+            content: Text(logSynced
+                ? '${meal.mealName ?? 'Meal'} logged!'
+                : '${meal.mealName ?? 'Meal'} saved offline — will sync when connected.'),
             backgroundColor: const Color(0xFF4C8C6A),
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -1086,6 +1123,7 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
   }
 
 }
+
 
 // ── Log Meal Bottom Sheet (AI Flow) ──────────────────────────────────────────
 

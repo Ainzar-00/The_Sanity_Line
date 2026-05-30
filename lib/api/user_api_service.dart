@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/user_model.dart';
-import '../models/provider_enum.dart';
 
 // ── UserApiService ────────────────────────────────────────────────────────────
 // Service to consume the Spring Boot backend API for Users.

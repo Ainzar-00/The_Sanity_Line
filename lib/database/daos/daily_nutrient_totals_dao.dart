@@ -85,4 +85,11 @@ class DailyNutrientTotalsDao extends DatabaseAccessor<AppDatabase>
       computedAt: Value(DateTime.now().toIso8601String()),
     ));
   }
+
+  Future<List<DailyNutrientTotal>> getUnsyncedTotals() =>
+      (select(dailyNutrientTotals)..where((t) => t.isSynced.equals(false))).get();
+
+  Future<void> markAsSynced(String totalId) =>
+      (update(dailyNutrientTotals)..where((t) => t.totalId.equals(totalId)))
+          .write(const DailyNutrientTotalsCompanion(isSynced: Value(true)));
 }

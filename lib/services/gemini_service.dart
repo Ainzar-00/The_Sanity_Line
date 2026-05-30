@@ -8,7 +8,7 @@ import '../database/app_database.dart';
 import 'plant_species_service.dart';
 
 // TODO: Replace with your actual Gemini API Key or use flutter_dotenv
-const _geminiApiKey = 'AIzaSyA-NkDvYPVa6bv-3w2O-EelMjcj_HLqLGc';
+const _geminiApiKey = 'AQ.Ab8RN6LJUNWaPFEvZJOInu5pFCWg0DdEMNuR5sdBW-XtxVe1jQ';
 
 class GeminiService {
   static Future<AiMealResponse> analyzeMeal({
