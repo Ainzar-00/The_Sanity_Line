@@ -28,6 +28,7 @@ class ProfileModel {
   final double? alcoholWeeklyUnits;
 
   // Onboarding state (read from GET response)
+  final List<String>? finishedOnboarding;
   final DateTime? onboardingCompletedAt;
 
   const ProfileModel({
@@ -45,6 +46,7 @@ class ProfileModel {
     this.avgSleepHours,
     this.caffeineDailyMg,
     this.alcoholWeeklyUnits,
+    this.finishedOnboarding,
     this.onboardingCompletedAt,
   });
 
@@ -77,6 +79,9 @@ class ProfileModel {
       avgSleepHours: (json['avgSleepHours'] as num?)?.toDouble(),
       caffeineDailyMg: json['caffeineDailyMg'] as int?,
       alcoholWeeklyUnits: (json['alcoholWeeklyUnits'] as num?)?.toDouble(),
+      finishedOnboarding: (json['finishedOnboarding'] as List<dynamic>?)
+          ?.map((e) => e as String)
+          .toList(),
       onboardingCompletedAt: json['onboardingCompletedAt'] == null
           ? null
           : DateTime.tryParse(json['onboardingCompletedAt'] as String),

@@ -34,6 +34,7 @@ class MyApp extends StatelessWidget {
           return HomeScreen(userId: userId);
         },
         '/nutrition': (context) => const NutritionScreen(),
+        '/onboarding/nutrition': (context) => const NutritionScreen(),
         '/assessment': (context) {
           final userId =
               ModalRoute.of(context)!.settings.arguments as String;

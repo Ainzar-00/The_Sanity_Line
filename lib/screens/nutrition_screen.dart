@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:uuid/uuid.dart';
-import 'package:drift/drift.dart' show Value;
+import 'package:drift/drift.dart' hide Column;
 
-import '../widgets/character_chat_bubble.dart';
-import '../providers/database_provider.dart';
+import '../api/profile_api_service.dart';
 import '../database/app_database.dart';
+import '../providers/database_provider.dart';
+import '../providers/onboarding_provider.dart';
+import '../widgets/character_chat_bubble.dart';
+import '../widgets/spotlight_tutorial.dart';
 
 // ── Nutrition Targets (mutable defaults) ──────────────────────────────────────
 
@@ -58,6 +61,19 @@ class NutritionScreen extends ConsumerStatefulWidget {
 class _NutritionScreenState extends ConsumerState<NutritionScreen> {
   int _selectedIndex = 0;
   bool _drLindaShown = false;
+  bool _showTutorialDummyMeal = false;
+
+  final GlobalKey _plantsKey = GlobalKey();
+  final GlobalKey _fermentedKey = GlobalKey();
+  final GlobalKey _fiberKey = GlobalKey();
+  final GlobalKey _omega3Key = GlobalKey();
+  final GlobalKey _magnesiumKey = GlobalKey();
+  final GlobalKey _tryptophanKey = GlobalKey();
+  final GlobalKey _mealsTabKey = GlobalKey();
+  final GlobalKey _fabKey = GlobalKey();
+  final GlobalKey _mealsListKey = GlobalKey();
+  final GlobalKey _sourceDialogKey = GlobalKey();
+  final GlobalKey _mealDetailsDialogKey = GlobalKey();
 
   /// Mutable targets — can be adjusted without touching the DB schema.
   NutritionTargets _targets = const NutritionTargets();
@@ -72,13 +88,18 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
 
   void _showDrLindaBubble() async {
     if (!mounted || _drLindaShown) return;
+
+    // If the nutrition onboarding is already complete (from provider or prefs),
+    // skip the entire tutorial without showing anything.
+    final finished = ref.read(onboardingProvider);
+    if (finished.contains(OnboardingPillars.nutrition)) return;
+
     final prefs = await SharedPreferences.getInstance();
     final hasShown =
         prefs.getBool('dr_linda_nutrition_intro_shown') ?? false;
     if (hasShown) return;
 
     _drLindaShown = true;
-    await prefs.setBool('dr_linda_nutrition_intro_shown', true);
     if (!mounted) return;
 
     CharacterChatBubble.show(
@@ -97,14 +118,188 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
               "Your body is full of hidden connections that shape how you feel every day.\n\nYour gut does more than digest food—it plays a key role in your mood, energy, and overall mental well-being.\n\nBy understanding and supporting this connection, we can help your body and mind work in better harmony.",
         ),
       ],
+      onDismiss: _onBubbleDismissed,
     );
   }
 
-  void _showMealSourceDialog() {
+  /// Called after the intro bubble is dismissed — patches app_intro then starts the tour.
+  void _onBubbleDismissed() async {
+    // Patch app_intro pillar
+    final notifier = ref.read(onboardingProvider.notifier);
+    await notifier.complete(OnboardingPillars.appIntro);
+    final completed = ref.read(onboardingProvider);
+
+    await ProfileApiService.updateOnboardingProgress(
+      _userId,
+      completed,
+      isLast: false,
+    );
+
+    if (!mounted) return;
+    _startOnboardingTour();
+  }
+
+  void _startOnboardingTour() {
+    SpotlightTutorial.show(context, [
+      TutorialStep(
+        targetKey: _plantsKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png', // Fallback to advising if this doesn't exist
+        text: 'This tracks the variety of plants you eat. The more diverse, the happier your gut microbiome!',
+      ),
+      TutorialStep(
+        targetKey: _fermentedKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'Fermented foods introduce beneficial probiotics to your gut.',
+      ),
+      TutorialStep(
+        targetKey: _fiberKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'Fiber is the fuel for your good bacteria.',
+      ),
+      TutorialStep(
+        targetKey: _omega3Key,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'Omega-3 fatty acids are essential for reducing inflammation and supporting brain health.',
+      ),
+      TutorialStep(
+        targetKey: _magnesiumKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'Magnesium helps regulate your nervous system and improves sleep quality.',
+      ),
+      TutorialStep(
+        targetKey: _tryptophanKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'Tryptophan is an amino acid your body uses to produce serotonin, the "happy chemical".',
+      ),
+      TutorialStep(
+        targetKey: _mealsTabKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'Now, let\'s move over to the Meals section to see how you can log your food.',
+        onComplete: () async {
+          setState(() => _selectedIndex = 1);
+        },
+      ),
+      TutorialStep(
+        targetKey: _mealsListKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'Here is where your logged and suggested meals live. It\'s your food diary!',
+        onStart: () async {
+          setState(() {
+            _selectedIndex = 1;
+          });
+          await Future.delayed(const Duration(milliseconds: 300));
+        },
+        onComplete: () async {},
+      ),
+      TutorialStep(
+        targetKey: _fabKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'Tap this button anytime to log a new meal.',
+      ),
+      TutorialStep(
+        targetKey: _sourceDialogKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'You can choose to log one of my AI-powered suggestions, or log a custom meal yourself!',
+        onStart: () async {
+          _showMealSourceDialog(isTutorial: true);
+        },
+        onComplete: () async {
+          if (mounted) Navigator.pop(context);
+        },
+      ),
+      TutorialStep(
+        targetKey: _mealsListKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'After adding a meal, this is how it will be displayed in your list.',
+        onStart: () async {
+          setState(() => _showTutorialDummyMeal = true);
+          await Future.delayed(const Duration(milliseconds: 200));
+        },
+        onComplete: () async {
+          // Keep dummy visible through the details step — turned off in that step's onComplete
+        },
+      ),
+      TutorialStep(
+        targetKey: _mealDetailsDialogKey,
+        imagePath: 'assets/chatPersonas/dr_LindaAdvising.png',
+        text: 'Tapping on a meal brings up this detailed card. It breaks down exactly what nutrients you got from it!',
+        onStart: () async {
+          final dummyMeal = Meal(
+            mealId: 'dummy',
+            userId: _userId,
+            mealName: 'Avocado Toast',
+            plantSpeciesCount: 2,
+            fermentedServings: 1.0,
+            prebioticFiberG: 8.0,
+            omega3G: 450,
+            magnesiumMg: 60,
+            tryptophanMg: 100,
+          );
+          _showMealDetailsDialog(context, dummyMeal, dialogKey: _mealDetailsDialogKey);
+        },
+        onComplete: () async {
+          // Close the details dialog and hide the dummy meal
+          if (mounted) Navigator.pop(context);
+          setState(() => _showTutorialDummyMeal = false);
+        },
+      ),
+      TutorialStep(
+        imagePath: 'assets/chatPersonas/dr_LindaWaving.png',
+        text: 'That\'s all for now! You are ready to start supporting your gut-brain connection.',
+        onComplete: () async {
+          await _completeNutritionOnboarding();
+        },
+      ),
+    ]);
+  }
+
+  /// Called when the user finishes the nutrition onboarding tutorial.
+  /// PATCHes the server, updates SharedPreferences, then navigates to /home.
+  Future<void> _completeNutritionOnboarding() async {
+    const pillar = OnboardingPillars.nutrition;
+    final notifier = ref.read(onboardingProvider.notifier);
+    await notifier.complete(pillar);
+    final completed = ref.read(onboardingProvider);
+    final isLast = OnboardingPillars.isLast(pillar);
+
+    final success = await ProfileApiService.updateOnboardingProgress(
+      _userId,
+      completed,
+      isLast: isLast,
+    );
+
+    if (!mounted) return;
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Failed to save progress. Please try again.'),
+          backgroundColor: const Color(0xFF4C8C6A),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+      // Roll back state so the user can retry from the last step
+      await notifier.rollback(pillar);
+      return;
+    }
+
+    // Mark the Dr. Linda bubble as already seen so it never re-shows
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('dr_linda_nutrition_intro_shown', true);
+
+    if (!mounted) return;
+    final nextRoute = OnboardingPillars.routeAfter(pillar) ?? '/home';
+    Navigator.pushReplacementNamed(context, nextRoute,
+        arguments: _userId);
+  }
+
+  void _showMealSourceDialog({bool isTutorial = false}) {
     showDialog(
       context: context,
       builder: (ctx) {
         return AlertDialog(
+          key: isTutorial ? _sourceDialogKey : null,
           backgroundColor: const Color(0xFFEDF4E7),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(20)),
@@ -216,10 +411,24 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFC3D3AE),
       body: _selectedIndex == 0
-          ? _DashboardTab(userId: _userId, targets: _targets)
-          : _MealsTab(userId: _userId),
+          ? _DashboardTab(
+              userId: _userId,
+              targets: _targets,
+              plantsKey: _plantsKey,
+              fermentedKey: _fermentedKey,
+              fiberKey: _fiberKey,
+              omega3Key: _omega3Key,
+              magnesiumKey: _magnesiumKey,
+              tryptophanKey: _tryptophanKey,
+            )
+          : _MealsTab(
+              userId: _userId,
+              mealsListKey: _mealsListKey,
+              showDummyMeal: _showTutorialDummyMeal,
+            ),
       floatingActionButton: _selectedIndex == 1
           ? FloatingActionButton(
+              key: _fabKey,
               onPressed: _showMealSourceDialog,
               backgroundColor: const Color(0xFF4C8C6A),
               foregroundColor: Colors.white,
@@ -251,8 +460,11 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
             label: 'Dashboard',
           ),
           BottomNavigationBarItem(
-            icon: Image.asset('assets/meals.png',
-                width: 48, height: 48, color: Colors.grey),
+            icon: Container(
+              key: _mealsTabKey,
+              child: Image.asset('assets/meals.png',
+                  width: 48, height: 48, color: Colors.grey),
+            ),
             activeIcon: Image.asset('assets/meals.png',
                 width: 48, height: 48, color: const Color(0xFF1C5F5F)),
             label: 'Meals',
@@ -268,8 +480,23 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
 class _DashboardTab extends ConsumerWidget {
   final String userId;
   final NutritionTargets targets;
+  final GlobalKey plantsKey;
+  final GlobalKey fermentedKey;
+  final GlobalKey fiberKey;
+  final GlobalKey omega3Key;
+  final GlobalKey magnesiumKey;
+  final GlobalKey tryptophanKey;
 
-  const _DashboardTab({required this.userId, required this.targets});
+  const _DashboardTab({
+    required this.userId,
+    required this.targets,
+    required this.plantsKey,
+    required this.fermentedKey,
+    required this.fiberKey,
+    required this.omega3Key,
+    required this.magnesiumKey,
+    required this.tryptophanKey,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -390,6 +617,7 @@ class _DashboardTab extends ConsumerWidget {
       childAspectRatio: 1.6,
       children: [
         _MetricCard(
+          key: plantsKey,
           iconPath: 'assets/nutritionDashboardAssets/plants.png',
           title: 'Plant Diversity',
           valueText:
@@ -397,6 +625,7 @@ class _DashboardTab extends ConsumerWidget {
           progress: prog(plantCurrent, t.plantSpecies.toDouble()),
         ),
         _MetricCard(
+          key: fermentedKey,
           iconPath:
               'assets/nutritionDashboardAssets/fermented_foods.png',
           title: 'Fermented Foods',
@@ -405,6 +634,7 @@ class _DashboardTab extends ConsumerWidget {
           progress: prog(fermentedCurrent, t.fermented),
         ),
         _MetricCard(
+          key: fiberKey,
           iconPath:
               'assets/nutritionDashboardAssets/prebiotic_fiber.png',
           title: 'Prebiotic Fiber',
@@ -413,6 +643,7 @@ class _DashboardTab extends ConsumerWidget {
           progress: prog(fiberCurrent, t.fiberG),
         ),
         _MetricCard(
+          key: omega3Key,
           iconPath: 'assets/nutritionDashboardAssets/omega_3.png',
           title: 'Omega-3',
           valueText:
@@ -420,6 +651,7 @@ class _DashboardTab extends ConsumerWidget {
           progress: prog(omega3Current, t.omega3G),
         ),
         _MetricCard(
+          key: magnesiumKey,
           iconPath: 'assets/nutritionDashboardAssets/magnesium.png',
           title: 'Magnesium',
           valueText:
@@ -427,6 +659,7 @@ class _DashboardTab extends ConsumerWidget {
           progress: prog(magCurrent, t.magnesiumMg),
         ),
         _MetricCard(
+          key: tryptophanKey,
           iconPath:
               'assets/nutritionDashboardAssets/tryptophan.png',
           title: 'Tryptophan',
@@ -448,6 +681,7 @@ class _MetricCard extends StatelessWidget {
   final double progress;
 
   const _MetricCard({
+    super.key,
     required this.iconPath,
     required this.title,
     required this.valueText,
@@ -519,7 +753,14 @@ class _MetricCard extends StatelessWidget {
 
 class _MealsTab extends ConsumerStatefulWidget {
   final String userId;
-  const _MealsTab({required this.userId});
+  final GlobalKey mealsListKey;
+  final bool showDummyMeal;
+
+  const _MealsTab({
+    required this.userId,
+    required this.mealsListKey,
+    this.showDummyMeal = false,
+  });
 
   @override
   ConsumerState<_MealsTab> createState() => _MealsTabState();
@@ -600,6 +841,8 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
     );
   }
 
+
+
   String _buildDescription(Meal meal) {
     final parts = <String>[];
     if ((meal.plantSpeciesCount ?? 0) > 0) {
@@ -664,6 +907,7 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
             ),
             // ── Meals list ───────────────────────────────────────────
             Expanded(
+              key: widget.mealsListKey,
               child: mealsAsync.when(
                 loading: () => const Center(
                   child: CircularProgressIndicator(
@@ -672,6 +916,22 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
                 error: (e, _) =>
                     Center(child: Text('Error: $e')),
                 data: (meals) {
+                  // Show a dummy card during the tutorial
+                  if (widget.showDummyMeal) {
+                    return ListView(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      children: const [
+                        _MealCard(
+                          name: 'Avocado Toast',
+                          slot: 'breakfast',
+                          description:
+                              'Sourdough bread with avocado, lemon & seeds',
+                        ),
+                      ],
+                    );
+                  }
+
                   if (meals.isEmpty) return _buildEmptyState();
 
                   return ListView.builder(
@@ -708,10 +968,13 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
                             );
                           }
                         },
-                        child: _MealCard(
-                          name: meal.mealName ?? 'Unnamed Meal',
-                          slot: meal.mealSlot ?? '',
-                          description: _buildDescription(meal),
+                        child: GestureDetector(
+                          onTap: () => _showMealDetailsDialog(context, meal),
+                          child: _MealCard(
+                            name: meal.mealName ?? 'Unnamed Meal',
+                            slot: meal.mealSlot ?? '',
+                            description: _buildDescription(meal),
+                          ),
                         ),
                       );
                     },
@@ -1116,4 +1379,141 @@ class _MealCard extends StatelessWidget {
       ),
     );
   }
+}
+
+void _showMealDetailsDialog(BuildContext context, Meal meal, {GlobalKey? dialogKey}) {
+  showDialog(
+    context: context,
+    builder: (ctx) {
+      return Dialog(
+        key: dialogKey,
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                meal.mealName ?? 'Unnamed Meal',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1C5F5F),
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              // Image Placeholder
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  height: 140,
+                  width: double.infinity,
+                  color: const Color(0xFFBDD4A8),
+                  child: const Icon(
+                    Icons.restaurant_menu,
+                    size: 64,
+                    color: Color(0xFF4C8C6A),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              // Grid
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        _buildGridCell(
+                            '+${meal.plantSpeciesCount ?? 0}', 'PLANTS'),
+                        _buildVerticalDivider(),
+                        _buildGridCell(
+                            (meal.fermentedServings ?? 0) > 0 ? 'YES' : 'NO',
+                            'FERMENTED'),
+                        _buildVerticalDivider(),
+                        _buildGridCell(
+                            '${meal.prebioticFiberG?.toStringAsFixed(0) ?? 0}g',
+                            'FIBER'),
+                      ],
+                    ),
+                    const Divider(height: 1, thickness: 1, color: Color(0xFFE0E0E0)),
+                    Row(
+                      children: [
+                        _buildGridCell(
+                            '${meal.omega3G?.toStringAsFixed(0) ?? 0}mg',
+                            'OMEGA-3'),
+                        _buildVerticalDivider(),
+                        _buildGridCell(
+                            '${meal.magnesiumMg?.toStringAsFixed(0) ?? 0}mg',
+                            'MAGNESIUM'),
+                        _buildVerticalDivider(),
+                        _buildGridCell(
+                            '${meal.tryptophanMg?.toStringAsFixed(0) ?? 0}mg',
+                            'TRYPTOPHAN'),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              // Description text
+              const Text(
+                'This meal provides healthy fats, fiber, and diverse plant nutrients. It also offers omega-3 fatty acids, magnesium, and tryptophan to support brain health and mood.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: Color(0xFF4C7A5A),
+                  height: 1.5,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
+Widget _buildGridCell(String value, String label) {
+  return Expanded(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Column(
+        children: [
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1C5F5F),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 10,
+              color: Color(0xFF4C7A5A),
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildVerticalDivider() {
+  return Container(
+    height: 60,
+    width: 1,
+    color: Colors.grey.shade300,
+  );
 }

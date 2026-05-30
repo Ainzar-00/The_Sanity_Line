@@ -136,7 +136,52 @@ class ProfileApiService {
     }
   }
 
+  // ── PATCH /api/v1/profiles/user/{userId}/onboarding-progress ──────────────
+  // Records which onboarding pillars the user has completed.
+  // Always sends the full cumulative list.
+  // When isLast == true, also sends onboardingCompletedAt = now.
+
+  static Future<bool> updateOnboardingProgress(
+    String userId,
+    List<String> completedSections, {
+    bool isLast = false,
+  }) async {
+    try {
+      final body = <String, dynamic>{
+        'finishedOnboarding': completedSections,
+        if (isLast) 'onboardingCompletedAt': DateTime.now().toIso8601String(),
+      };
+
+      final response = await http.patch(
+        Uri.parse('$_base/user/$userId/onboarding-progress'),
+        headers: _headers,
+        body: jsonEncode(body),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 204) return true;
+      _log('updateOnboardingProgress', response);
+      return false;
+    } catch (e, st) {
+      _logException('updateOnboardingProgress', e, st);
+      return false;
+    }
+  }
+
+  // ── GET finished pillars from profile ─────────────────────────────────────
+  // Fetches the user's profile and extracts finishedOnboarding.
+  // Returns an empty list if the profile doesn't exist or the field is null.
+
+  static Future<List<String>> getFinishedPillars(String userId) async {
+    try {
+      final profile = await getProfileByUserId(userId);
+      return profile?.finishedOnboarding ?? [];
+    } catch (_) {
+      return [];
+    }
+  }
+
   // ── PATCH /api/v1/profiles/user/{userId}/onboarding ───────────────────────
+
   // Marks onboarding complete (sets onboarding_completed_at = now).
   // Returns true on success, false if already done (409) or on error.
 

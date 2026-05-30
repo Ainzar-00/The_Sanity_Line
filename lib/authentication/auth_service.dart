@@ -1,10 +1,13 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_result.dart';
 import '../api/user_api_service.dart';
+import '../api/profile_api_service.dart';
 import '../models/user_model.dart';
-import '../models/provider_enum.dart';
+import '../models/provider_enum.dart' as provider_enum;
+import '../providers/onboarding_provider.dart';
 
 // ── AuthService ───────────────────────────────────────────────────────────────
 // Pure business logic — no BuildContext, no Navigator, no UI widgets.
@@ -23,7 +26,11 @@ class AuthService {
 
   // ── Email / password login ─────────────────────────────────────────────────
 
-  static Future<AuthResult> login(String email, String password) async {
+  static Future<AuthResult> login(
+    String email,
+    String password, {
+    WidgetRef? ref,
+  }) async {
     try {
       final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email.trim(),
@@ -32,10 +39,12 @@ class AuthService {
 
       // Account exists in Firebase — save UID and proceed
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('uid', credential.user!.uid);
-      await UserApiService.updateLastSeen(credential.user!.uid);
+      final uid = credential.user!.uid;
+      await prefs.setString('uid', uid);
+      await UserApiService.updateLastSeen(uid);
+      if (ref != null) await _restoreOnboarding(uid, ref);
 
-      return AuthResult.ok(route: '/home', routeArguments: credential.user!.uid);
+      return AuthResult.ok(route: '/home', routeArguments: uid);
     } on FirebaseAuthException catch (e) {
       return AuthResult.error(mapFirebaseError(e.code));
     } catch (_) {
@@ -49,8 +58,9 @@ class AuthService {
     String name,
     String email,
     String password,
-    String confirmPassword,
-  ) async {
+    String confirmPassword, {
+    WidgetRef? ref,
+  }) async {
     if (password.trim() != confirmPassword.trim()) {
       return AuthResult.error('Passwords do not match.');
     }
@@ -66,13 +76,14 @@ class AuthService {
         userId: credential.user!.uid,
         email: email.trim(),
         displayName: name.trim(),
-        provider: Provider.email,
+        provider: provider_enum.Provider.email,
       );
       await UserApiService.createUser(userModel);
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('uid', credential.user!.uid);
 
+      // New user — no onboarding completed yet, notifier stays empty
       return AuthResult.ok(route: '/assessment', routeArguments: credential.user!.uid);
     } on FirebaseAuthException catch (e) {
       return AuthResult.error(mapFirebaseError(e.code));
@@ -83,7 +94,10 @@ class AuthService {
 
   // ── Google sign-in ─────────────────────────────────────────────────────────
 
-  static Future<AuthResult> signInWithGoogle({required bool isLogin}) async {
+  static Future<AuthResult> signInWithGoogle({
+    required bool isLogin,
+    WidgetRef? ref,
+  }) async {
     try {
       final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
       if (googleUser == null) return AuthResult.error('');
@@ -115,6 +129,7 @@ class AuthService {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('uid', uid);
         await UserApiService.updateLastSeen(uid);
+        if (ref != null) await _restoreOnboarding(uid, ref);
         return AuthResult.ok(route: '/home', routeArguments: uid);
       }
 
@@ -124,6 +139,7 @@ class AuthService {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('uid', uid);
         await UserApiService.updateLastSeen(uid);
+        if (ref != null) await _restoreOnboarding(uid, ref);
         return AuthResult.ok(route: '/home', routeArguments: uid);
       }
 
@@ -133,7 +149,7 @@ class AuthService {
         email: credential.user!.email,
         displayName: credential.user!.displayName,
         photoUrl: credential.user!.photoURL,
-        provider: Provider.google,
+        provider: provider_enum.Provider.google,
       );
       await UserApiService.createUser(userModel);
 
@@ -154,24 +170,45 @@ class AuthService {
 
   // ── Session check (used by SplashScreen) ──────────────────────────────────
 
-  static Future<AuthResult?> checkCurrentUser() async {
+  static Future<AuthResult?> checkCurrentUser({WidgetRef? ref}) async {
     await Future.delayed(const Duration(seconds: 2)); // splash delay
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return null;
 
     await UserApiService.updateLastSeen(user.uid);
+    if (ref != null) await _restoreOnboarding(user.uid, ref);
     return AuthResult.ok(route: '/home', routeArguments: user.uid);
   }
 
   // ── Logout ─────────────────────────────────────────────────────────────────
 
   static Future<void> logout() async {
-    // Remove UID from local storage
+    // Remove UID and onboarding progress from local storage
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('uid');
+    await OnboardingNotifier.clearPrefs();
     // Sign out from Google and Firebase
     await _googleSignIn.signOut();
     await FirebaseAuth.instance.signOut();
+  }
+
+  // ── Onboarding restoration ─────────────────────────────────────────────────
+  // Called after every successful login / session check.
+  // 1. Try SharedPreferences first (fast path).
+  // 2. If missing, fetch finishedOnboarding from the server and cache locally.
+
+  static Future<void> _restoreOnboarding(String uid, WidgetRef ref) async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('onboarding_finished_pillars');
+    final notifier = ref.read(onboardingProvider.notifier);
+
+    if (raw != null && raw.isNotEmpty) {
+      await notifier.loadFromPrefs();
+    } else {
+      // Not cached — fetch from server and cache
+      final pillars = await ProfileApiService.getFinishedPillars(uid);
+      await notifier.loadFromServer(pillars);
+    }
   }
 
   // ── Error mapping ──────────────────────────────────────────────────────────

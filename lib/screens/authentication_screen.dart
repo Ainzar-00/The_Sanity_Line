@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../animations/smoke_painter.dart';
 import '../authentication/auth_service.dart';
 import '../widgets/google_logo.dart';
@@ -6,14 +7,14 @@ import '../widgets/google_logo.dart';
 // ── LoginScreen ───────────────────────────────────────────────────────────────
 // Pure UI — all auth logic is delegated to AuthService.
 
-class LoginScreen extends StatefulWidget {
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen>
+class _LoginScreenState extends ConsumerState<LoginScreen>
     with TickerProviderStateMixin {
   // ── Controllers ─────────────────────────────────────────────────────────────
   final _emailController = TextEditingController();
@@ -60,12 +61,14 @@ class _LoginScreenState extends State<LoginScreen>
         ? await AuthService.login(
             _emailController.text,
             _passwordController.text,
+            ref: ref,
           )
         : await AuthService.signUp(
             _nameController.text,
             _emailController.text,
             _passwordController.text,
             _confirmPasswordController.text,
+            ref: ref,
           );
 
     if (!mounted) return;
@@ -85,7 +88,7 @@ class _LoginScreenState extends State<LoginScreen>
   Future<void> _handleGoogleSignIn() async {
     setState(() => _isGoogleLoading = true);
 
-    final result = await AuthService.signInWithGoogle(isLogin: _isLoginMode);
+    final result = await AuthService.signInWithGoogle(isLogin: _isLoginMode, ref: ref);
 
     if (!mounted) return;
     setState(() => _isGoogleLoading = false);
