@@ -20,13 +20,8 @@ keep todays data localy
 -add your own meals 
 -display in the lists  and deleting items
 -dashboard results after consumming
--weekly summeries
-
--Statistiques (if still time):
 
 ==================
 problemes :
 
-authentification enforcment (firebase && server)
-
-
+removing the item in offline after consumming

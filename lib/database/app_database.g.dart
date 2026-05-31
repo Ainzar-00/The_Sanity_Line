@@ -1309,6 +1309,21 @@ class $MealsTable extends Meals with TableInfo<$MealsTable, Meal> {
     ),
     defaultValue: const Constant(false),
   );
+  static const VerificationMeta _isLoggedMeta = const VerificationMeta(
+    'isLogged',
+  );
+  @override
+  late final GeneratedColumn<bool> isLogged = GeneratedColumn<bool>(
+    'is_logged',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_logged" IN (0, 1))',
+    ),
+    defaultValue: const Constant(false),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     mealId,
@@ -1324,6 +1339,7 @@ class $MealsTable extends Meals with TableInfo<$MealsTable, Meal> {
     prebioticFiberG,
     tryptophanMg,
     isSynced,
+    isLogged,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1440,6 +1456,12 @@ class $MealsTable extends Meals with TableInfo<$MealsTable, Meal> {
         isSynced.isAcceptableOrUnknown(data['is_synced']!, _isSyncedMeta),
       );
     }
+    if (data.containsKey('is_logged')) {
+      context.handle(
+        _isLoggedMeta,
+        isLogged.isAcceptableOrUnknown(data['is_logged']!, _isLoggedMeta),
+      );
+    }
     return context;
   }
 
@@ -1501,6 +1523,10 @@ class $MealsTable extends Meals with TableInfo<$MealsTable, Meal> {
         DriftSqlType.bool,
         data['${effectivePrefix}is_synced'],
       )!,
+      isLogged: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_logged'],
+      )!,
     );
   }
 
@@ -1530,6 +1556,9 @@ class Meal extends DataClass implements Insertable<Meal> {
 
   /// Flag for offline sync. True if successfully synced to the backend.
   final bool isSynced;
+
+  /// Flag to hide the meal card once logged.
+  final bool isLogged;
   const Meal({
     required this.mealId,
     required this.userId,
@@ -1544,6 +1573,7 @@ class Meal extends DataClass implements Insertable<Meal> {
     this.prebioticFiberG,
     this.tryptophanMg,
     required this.isSynced,
+    required this.isLogged,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1581,6 +1611,7 @@ class Meal extends DataClass implements Insertable<Meal> {
       map['tryptophan_mg'] = Variable<double>(tryptophanMg);
     }
     map['is_synced'] = Variable<bool>(isSynced);
+    map['is_logged'] = Variable<bool>(isLogged);
     return map;
   }
 
@@ -1619,6 +1650,7 @@ class Meal extends DataClass implements Insertable<Meal> {
           ? const Value.absent()
           : Value(tryptophanMg),
       isSynced: Value(isSynced),
+      isLogged: Value(isLogged),
     );
   }
 
@@ -1643,6 +1675,7 @@ class Meal extends DataClass implements Insertable<Meal> {
       prebioticFiberG: serializer.fromJson<double?>(json['prebioticFiberG']),
       tryptophanMg: serializer.fromJson<double?>(json['tryptophanMg']),
       isSynced: serializer.fromJson<bool>(json['isSynced']),
+      isLogged: serializer.fromJson<bool>(json['isLogged']),
     );
   }
   @override
@@ -1662,6 +1695,7 @@ class Meal extends DataClass implements Insertable<Meal> {
       'prebioticFiberG': serializer.toJson<double?>(prebioticFiberG),
       'tryptophanMg': serializer.toJson<double?>(tryptophanMg),
       'isSynced': serializer.toJson<bool>(isSynced),
+      'isLogged': serializer.toJson<bool>(isLogged),
     };
   }
 
@@ -1679,6 +1713,7 @@ class Meal extends DataClass implements Insertable<Meal> {
     Value<double?> prebioticFiberG = const Value.absent(),
     Value<double?> tryptophanMg = const Value.absent(),
     bool? isSynced,
+    bool? isLogged,
   }) => Meal(
     mealId: mealId ?? this.mealId,
     userId: userId ?? this.userId,
@@ -1701,6 +1736,7 @@ class Meal extends DataClass implements Insertable<Meal> {
         : this.prebioticFiberG,
     tryptophanMg: tryptophanMg.present ? tryptophanMg.value : this.tryptophanMg,
     isSynced: isSynced ?? this.isSynced,
+    isLogged: isLogged ?? this.isLogged,
   );
   Meal copyWithCompanion(MealsCompanion data) {
     return Meal(
@@ -1731,6 +1767,7 @@ class Meal extends DataClass implements Insertable<Meal> {
           ? data.tryptophanMg.value
           : this.tryptophanMg,
       isSynced: data.isSynced.present ? data.isSynced.value : this.isSynced,
+      isLogged: data.isLogged.present ? data.isLogged.value : this.isLogged,
     );
   }
 
@@ -1749,7 +1786,8 @@ class Meal extends DataClass implements Insertable<Meal> {
           ..write('omega3G: $omega3G, ')
           ..write('prebioticFiberG: $prebioticFiberG, ')
           ..write('tryptophanMg: $tryptophanMg, ')
-          ..write('isSynced: $isSynced')
+          ..write('isSynced: $isSynced, ')
+          ..write('isLogged: $isLogged')
           ..write(')'))
         .toString();
   }
@@ -1769,6 +1807,7 @@ class Meal extends DataClass implements Insertable<Meal> {
     prebioticFiberG,
     tryptophanMg,
     isSynced,
+    isLogged,
   );
   @override
   bool operator ==(Object other) =>
@@ -1786,7 +1825,8 @@ class Meal extends DataClass implements Insertable<Meal> {
           other.omega3G == this.omega3G &&
           other.prebioticFiberG == this.prebioticFiberG &&
           other.tryptophanMg == this.tryptophanMg &&
-          other.isSynced == this.isSynced);
+          other.isSynced == this.isSynced &&
+          other.isLogged == this.isLogged);
 }
 
 class MealsCompanion extends UpdateCompanion<Meal> {
@@ -1803,6 +1843,7 @@ class MealsCompanion extends UpdateCompanion<Meal> {
   final Value<double?> prebioticFiberG;
   final Value<double?> tryptophanMg;
   final Value<bool> isSynced;
+  final Value<bool> isLogged;
   final Value<int> rowid;
   const MealsCompanion({
     this.mealId = const Value.absent(),
@@ -1818,6 +1859,7 @@ class MealsCompanion extends UpdateCompanion<Meal> {
     this.prebioticFiberG = const Value.absent(),
     this.tryptophanMg = const Value.absent(),
     this.isSynced = const Value.absent(),
+    this.isLogged = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MealsCompanion.insert({
@@ -1834,6 +1876,7 @@ class MealsCompanion extends UpdateCompanion<Meal> {
     this.prebioticFiberG = const Value.absent(),
     this.tryptophanMg = const Value.absent(),
     this.isSynced = const Value.absent(),
+    this.isLogged = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : mealId = Value(mealId),
        userId = Value(userId);
@@ -1851,6 +1894,7 @@ class MealsCompanion extends UpdateCompanion<Meal> {
     Expression<double>? prebioticFiberG,
     Expression<double>? tryptophanMg,
     Expression<bool>? isSynced,
+    Expression<bool>? isLogged,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -1867,6 +1911,7 @@ class MealsCompanion extends UpdateCompanion<Meal> {
       if (prebioticFiberG != null) 'prebiotic_fiber_g': prebioticFiberG,
       if (tryptophanMg != null) 'tryptophan_mg': tryptophanMg,
       if (isSynced != null) 'is_synced': isSynced,
+      if (isLogged != null) 'is_logged': isLogged,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -1885,6 +1930,7 @@ class MealsCompanion extends UpdateCompanion<Meal> {
     Value<double?>? prebioticFiberG,
     Value<double?>? tryptophanMg,
     Value<bool>? isSynced,
+    Value<bool>? isLogged,
     Value<int>? rowid,
   }) {
     return MealsCompanion(
@@ -1901,6 +1947,7 @@ class MealsCompanion extends UpdateCompanion<Meal> {
       prebioticFiberG: prebioticFiberG ?? this.prebioticFiberG,
       tryptophanMg: tryptophanMg ?? this.tryptophanMg,
       isSynced: isSynced ?? this.isSynced,
+      isLogged: isLogged ?? this.isLogged,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -1947,6 +1994,9 @@ class MealsCompanion extends UpdateCompanion<Meal> {
     if (isSynced.present) {
       map['is_synced'] = Variable<bool>(isSynced.value);
     }
+    if (isLogged.present) {
+      map['is_logged'] = Variable<bool>(isLogged.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -1969,6 +2019,7 @@ class MealsCompanion extends UpdateCompanion<Meal> {
           ..write('prebioticFiberG: $prebioticFiberG, ')
           ..write('tryptophanMg: $tryptophanMg, ')
           ..write('isSynced: $isSynced, ')
+          ..write('isLogged: $isLogged, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -4198,6 +4249,7 @@ typedef $$MealsTableCreateCompanionBuilder =
       Value<double?> prebioticFiberG,
       Value<double?> tryptophanMg,
       Value<bool> isSynced,
+      Value<bool> isLogged,
       Value<int> rowid,
     });
 typedef $$MealsTableUpdateCompanionBuilder =
@@ -4215,6 +4267,7 @@ typedef $$MealsTableUpdateCompanionBuilder =
       Value<double?> prebioticFiberG,
       Value<double?> tryptophanMg,
       Value<bool> isSynced,
+      Value<bool> isLogged,
       Value<int> rowid,
     });
 
@@ -4328,6 +4381,11 @@ class $$MealsTableFilterComposer extends Composer<_$AppDatabase, $MealsTable> {
 
   ColumnFilters<bool> get isSynced => $composableBuilder(
     column: $table.isSynced,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isLogged => $composableBuilder(
+    column: $table.isLogged,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -4449,6 +4507,11 @@ class $$MealsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<bool> get isLogged => $composableBuilder(
+    column: $table.isLogged,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   $$MealSuggestionsTableOrderingComposer get suggestionId {
     final $$MealSuggestionsTableOrderingComposer composer = $composerBuilder(
       composer: this,
@@ -4529,6 +4592,9 @@ class $$MealsTableAnnotationComposer
 
   GeneratedColumn<bool> get isSynced =>
       $composableBuilder(column: $table.isSynced, builder: (column) => column);
+
+  GeneratedColumn<bool> get isLogged =>
+      $composableBuilder(column: $table.isLogged, builder: (column) => column);
 
   $$MealSuggestionsTableAnnotationComposer get suggestionId {
     final $$MealSuggestionsTableAnnotationComposer composer = $composerBuilder(
@@ -4620,6 +4686,7 @@ class $$MealsTableTableManager
                 Value<double?> prebioticFiberG = const Value.absent(),
                 Value<double?> tryptophanMg = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
+                Value<bool> isLogged = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MealsCompanion(
                 mealId: mealId,
@@ -4635,6 +4702,7 @@ class $$MealsTableTableManager
                 prebioticFiberG: prebioticFiberG,
                 tryptophanMg: tryptophanMg,
                 isSynced: isSynced,
+                isLogged: isLogged,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -4652,6 +4720,7 @@ class $$MealsTableTableManager
                 Value<double?> prebioticFiberG = const Value.absent(),
                 Value<double?> tryptophanMg = const Value.absent(),
                 Value<bool> isSynced = const Value.absent(),
+                Value<bool> isLogged = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MealsCompanion.insert(
                 mealId: mealId,
@@ -4667,6 +4736,7 @@ class $$MealsTableTableManager
                 prebioticFiberG: prebioticFiberG,
                 tryptophanMg: tryptophanMg,
                 isSynced: isSynced,
+                isLogged: isLogged,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0

@@ -20,7 +20,8 @@ import '../services/nutrient_target_service.dart';
 import '../services/plant_species_service.dart';
 import '../services/gemini_service.dart';
 import '../services/midnight_reset_service.dart';
-
+import '../models/suggestion_mode.dart';
+import '../api/daily_state_api_service.dart';
 
 // ── NutritionScreen ───────────────────────────────────────────────────────────
 
@@ -66,7 +67,36 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
     final today = DateTime.now().toIso8601String().split('T').first;
     final row = await db.dailyNutrientTotalsDao.getTotalsForDate(_userId, today);
     if (row == null) {
-      // Midnight reset was missed (app killed). Run it now.
+      // 1. Try to fetch today's totals from the server first (in case of re-login/re-install)
+      final serverTotals = await DailyNutrientTotalsApiService.fetchTotalsForDate(_userId, today);
+      if (serverTotals != null) {
+        final totalId = serverTotals['totalId'] as String? ?? const Uuid().v4();
+        await db.dailyNutrientTotalsDao.insertOrReplaceTotals(
+          DailyNutrientTotalsCompanion.insert(
+            totalId: totalId,
+            userId: _userId,
+            date: today,
+            computedAt: serverTotals['computedAt'] as String? ?? DateTime.now().toIso8601String(),
+            fermentedServings: drift.Value((serverTotals['fermentedServings'] as num?)?.toDouble() ?? 0.0),
+            magnesiumMg: drift.Value((serverTotals['magnesiumMg'] as num?)?.toDouble() ?? 0.0),
+            omega3G: drift.Value((serverTotals['omega3G'] as num?)?.toDouble() ?? 0.0),
+            overallScorePct: drift.Value((serverTotals['overallScorePct'] as num?)?.toDouble() ?? 0.0),
+            plantSpeciesCount: drift.Value(serverTotals['plantSpeciesCount'] as int? ?? 0),
+            prebioticFiberG: drift.Value((serverTotals['prebioticFiberG'] as num?)?.toDouble() ?? 0.0),
+            tryptophanMg: drift.Value((serverTotals['tryptophanMg'] as num?)?.toDouble() ?? 0.0),
+            targetFermented: drift.Value((serverTotals['targetFermented'] as num?)?.toDouble() ?? 2.0),
+            targetFiberG: drift.Value((serverTotals['targetFiberG'] as num?)?.toDouble() ?? 28.0),
+            targetMagnesiumMg: drift.Value((serverTotals['targetMagnesiumMg'] as num?)?.toDouble() ?? 350.0),
+            targetOmega3G: drift.Value((serverTotals['targetOmega3G'] as num?)?.toDouble() ?? 2.0),
+            targetPlantSpecies: drift.Value(serverTotals['targetPlantSpecies'] as int? ?? 5),
+            targetTryptophanMg: drift.Value((serverTotals['targetTryptophanMg'] as num?)?.toDouble() ?? 400.0),
+            isSynced: const drift.Value(true),
+          ),
+        );
+        return;
+      }
+
+      // 2. Midnight reset was missed (app killed). Run standard reset.
       await MidnightResetService.runReset(_userId, db);
     }
   }
@@ -225,6 +255,7 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
             magnesiumMg: 60,
             tryptophanMg: 100,
             isSynced: false,
+            isLogged: false,
           );
           _showMealDetailsDialog(context, dummyMeal);
           // Wait for the dialog to render before the spotlight redraws
@@ -314,7 +345,7 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
                 subtitle: 'Log a meal recommended for you',
                 onTap: () {
                   Navigator.pop(ctx);
-                  // TODO: Handle Dr. Linda's suggestion
+                  _showAiSuggestionSheet();
                 },
               ),
               const SizedBox(height: 12),
@@ -396,6 +427,15 @@ class _NutritionScreenState extends ConsumerState<NutritionScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _OwnMealFlowSheet(userId: _userId),
+    );
+  }
+
+  void _showAiSuggestionSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AiSuggestionFlowSheet(userId: _userId),
     );
   }
 
@@ -1034,18 +1074,46 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
         tOmega = dt.targetOmega3G ?? 2;
         tMag = dt.targetMagnesiumMg ?? 350;
         tTryp = dt.targetTryptophanMg ?? 400;
+      }
 
-        score += (tPlant > 0 ? (plantSum / tPlant).clamp(0, 1) : 0);
-        score += (tFiber > 0 ? (fiberSum / tFiber).clamp(0, 1) : 0);
-        score += (tFerm > 0 ? (fermSum / tFerm).clamp(0, 1) : 0);
-        score += (tOmega > 0 ? (omegaSum / tOmega).clamp(0, 1) : 0);
-        score += (tMag > 0 ? (magSum / tMag).clamp(0, 1) : 0);
-        score += (tTryp > 0 ? (trypSum / tTryp).clamp(0, 1) : 0);
-        score /= 6.0;
+      score += (tPlant > 0 ? (plantSum / tPlant).clamp(0, 1) : 0);
+      score += (tFiber > 0 ? (fiberSum / tFiber).clamp(0, 1) : 0);
+      score += (tFerm > 0 ? (fermSum / tFerm).clamp(0, 1) : 0);
+      score += (tOmega > 0 ? (omegaSum / tOmega).clamp(0, 1) : 0);
+      score += (tMag > 0 ? (magSum / tMag).clamp(0, 1) : 0);
+      score += (tTryp > 0 ? (trypSum / tTryp).clamp(0, 1) : 0);
+      score /= 6.0;
 
+      final String currentTotalId;
+      if (dt != null) {
+        currentTotalId = dt.totalId;
         await db.dailyNutrientTotalsDao.updateProgress(
             widget.userId, todayStr, fermSum, fiberSum, magSum, omegaSum,
             plantSum, trypSum, score);
+      } else {
+        currentTotalId = uuid.v4();
+        await db.dailyNutrientTotalsDao.insertOrReplaceTotals(
+          DailyNutrientTotalsCompanion.insert(
+            totalId: currentTotalId,
+            userId: widget.userId,
+            date: todayStr,
+            computedAt: now.toIso8601String(),
+            fermentedServings: drift.Value(fermSum),
+            magnesiumMg: drift.Value(magSum),
+            omega3G: drift.Value(omegaSum),
+            overallScorePct: drift.Value(score),
+            plantSpeciesCount: drift.Value(plantSum),
+            prebioticFiberG: drift.Value(fiberSum),
+            tryptophanMg: drift.Value(trypSum),
+            targetFermented: drift.Value(tFerm),
+            targetFiberG: drift.Value(tFiber),
+            targetMagnesiumMg: drift.Value(tMag),
+            targetOmega3G: drift.Value(tOmega),
+            targetPlantSpecies: drift.Value(tPlant),
+            targetTryptophanMg: drift.Value(tTryp),
+            isSynced: const drift.Value(false),
+          ),
+        );
       }
 
       // ── 4. Try to push meal log to server immediately ─────────────────────
@@ -1071,8 +1139,8 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
         // Mark log as synced in local DB
         await db.mealLogDao.markAsSynced(logId);
 
-        // ── 5. Push daily totals (PATCH or POST) using typed DTO ─────────────
-        await DailyNutrientTotalsApiService.upsertTotals(
+        // ── 5. Push daily totals (POST) using typed DTO ──────────────────────
+        final totalsSynced = await DailyNutrientTotalsApiService.upsertTotals(
           userId: widget.userId,
           date: todayStr,
           plantSpeciesCount: plantSum,
@@ -1089,12 +1157,12 @@ class _MealsTabState extends ConsumerState<_MealsTab> {
           targetMagnesiumMg: tMag,
           targetTryptophanMg: tTryp,
         );
-        if (dt != null) {
-          await db.dailyNutrientTotalsDao.markAsSynced(dt.totalId);
+        if (totalsSynced) {
+          await db.dailyNutrientTotalsDao.markAsSynced(currentTotalId);
         }
 
         // ── 6. Remove the meal card from the list ─────────────────────────────
-        await db.mealDao.deleteMeal(meal.mealId);
+        await db.mealDao.markAsLogged(meal.mealId);
       }
       // If offline, the log stays with isSynced=false and will sync later.
 
@@ -1889,4 +1957,862 @@ Widget _buildVerticalDivider() {
     width: 1,
     color: Colors.grey.shade300,
   );
+}
+
+// ── AI Suggestion Flow Bottom Sheet ──────────────────────────────────────────
+
+enum _AiSuggestionStage {
+  collectingState,
+  pickMode,
+  loading,
+  review,
+  logging,
+}
+
+class _AiSuggestionFlowSheet extends ConsumerStatefulWidget {
+  final String userId;
+  const _AiSuggestionFlowSheet({required this.userId});
+
+  @override
+  ConsumerState<_AiSuggestionFlowSheet> createState() =>
+      _AiSuggestionFlowSheetState();
+}
+
+class _AiSuggestionFlowSheetState
+    extends ConsumerState<_AiSuggestionFlowSheet> {
+  _AiSuggestionStage _stage = _AiSuggestionStage.collectingState;
+  
+  // State collection
+  int _questionIndex = 0;
+  final Map<String, dynamic> _answers = {};
+  String? _stateId;
+  
+  // Mode picking
+  SuggestionMode? _selectedMode;
+  String? _selectedSlot;
+
+  // AI Response
+  List<AiMealResponse> _aiResponses = [];
+  final Set<int> _selectedMealIndices = {};
+
+  // Controllers for text inputs
+  final _textController = TextEditingController();
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
+
+  void _nextQuestion(String key, dynamic value) {
+    if (value != null) {
+      _answers[key] = value;
+    }
+    
+    _textController.clear();
+
+    if (_questionIndex < 7) {
+      setState(() => _questionIndex++);
+    } else {
+      _finishStateCollection();
+    }
+  }
+
+  Future<void> _finishStateCollection() async {
+    setState(() => _stage = _AiSuggestionStage.loading);
+    
+    // Create DailyStateModel from answers
+    final now = DateTime.now();
+    final body = {
+      'date': now.toIso8601String().split('T').first,
+      'currentMood': _answers['mood'],
+      'energyLevel': _answers['energy'],
+      'sleepHoursPrevNight': _answers['sleepHours'],
+      'sleepQuality': _answers['sleepQuality'],
+      'stressLevel': _answers['stress'],
+      'currentDigestion': _answers['digestion'],
+      'physicalTraining': _answers['trained'] == true,
+      'trainingType': _answers['trainingType'],
+      'trainingDurationMin': _answers['trainingDuration'],
+      'trainingIntensity': _answers['trainingIntensity'],
+      'alcoholPrevNight': _answers['alcohol'] == true,
+      'caffeineTodayMg': _answers['caffeine'],
+      'waterIntakeMl': _answers['water'],
+      'hungerLevel': _answers['hunger'],
+      'hoursSinceLastMeal': _answers['hoursSinceMeal'],
+      'craving': _answers['craving'],
+      'aversion': _answers['aversion'],
+      'cookTimeAvailableMin': _answers['cookTime'],
+      'requestedAt': now.toIso8601String(),
+    };
+
+    final savedState = await DailyStateApiService.post(widget.userId, body);
+    if (savedState != null) {
+      _stateId = savedState.stateId;
+    } else {
+      // Warn but continue
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Could not sync daily state, but continuing...'),
+            backgroundColor: Colors.orange.shade800,
+          ),
+        );
+      }
+    }
+
+    if (mounted) {
+      setState(() => _stage = _AiSuggestionStage.pickMode);
+    }
+  }
+
+  Future<void> _generateSuggestions() async {
+    if (_selectedMode == null) return;
+    if (_selectedMode == SuggestionMode.oneMeal && _selectedSlot == null) return;
+
+    setState(() => _stage = _AiSuggestionStage.loading);
+
+    try {
+      final ctx = await ref.read(mealFlowContextProvider(widget.userId).future);
+      final profile = ctx.profile;
+      if (profile == null) throw Exception("Profile not found.");
+
+      // Compute targets & context hash
+      final targets = NutrientTargetService.computeTargets(
+          profile, ctx.conditions, ctx.dailyState);
+
+      final newHash = NutrientTargetService.buildContextHash(
+          widget.userId, profile, ctx.conditions, ctx.dailyState);
+
+      final prefs = await SharedPreferences.getInstance();
+      final oldHash = prefs.getString('nutrient_context_hash');
+
+      final db = ref.read(dbProvider);
+      
+      final now = DateTime.now();
+      final todayStr = now.toIso8601String().split('T').first;
+
+      if (ctx.dailyTotal == null) {
+        final uuid = const Uuid();
+        await db.dailyNutrientTotalsDao.insertOrReplaceTotals(
+          DailyNutrientTotalsCompanion.insert(
+            totalId: uuid.v4(),
+            userId: widget.userId,
+            date: todayStr,
+            computedAt: now.toIso8601String(),
+            fermentedServings: const drift.Value(0.0),
+            magnesiumMg: const drift.Value(0.0),
+            omega3G: const drift.Value(0.0),
+            overallScorePct: const drift.Value(0.0),
+            plantSpeciesCount: const drift.Value(0),
+            prebioticFiberG: const drift.Value(0.0),
+            tryptophanMg: const drift.Value(0.0),
+            targetFermented: drift.Value(targets.fermented),
+            targetFiberG: drift.Value(targets.fiberG),
+            targetMagnesiumMg: drift.Value(targets.magnesiumMg),
+            targetOmega3G: drift.Value(targets.omega3G),
+            targetPlantSpecies: drift.Value(targets.plantSpecies),
+            targetTryptophanMg: drift.Value(targets.tryptophanMg),
+          ),
+        );
+      } else if (oldHash != newHash) {
+        await db.dailyNutrientTotalsDao.updateTargets(
+          widget.userId,
+          todayStr,
+          targets.fermented,
+          targets.fiberG,
+          targets.magnesiumMg,
+          targets.omega3G,
+          targets.plantSpecies,
+          targets.tryptophanMg,
+        );
+      }
+
+      await prefs.setString('nutrient_context_hash', newHash);
+
+      final dailyTotal = await db.dailyNutrientTotalsDao.getTotalsForDate(widget.userId, todayStr);
+
+      final plantWindow = await PlantSpeciesService.queryWindow(
+          db, widget.userId, targets.plantSpecies, dailyTotal?.plantSpeciesCount ?? 0);
+          
+      // Determine remaining slots for Mode A
+      List<String> remaining = [];
+      if (_selectedMode == SuggestionMode.coverMyNeeds) {
+        final logs = await db.mealLogDao.getLogsForDate(widget.userId, todayStr);
+        final loggedSlots = logs.map((l) => l.mealSlot.toLowerCase()).toSet();
+        const allSlots = ['breakfast', 'lunch', 'dinner', 'snack'];
+        remaining = allSlots.where((s) => !loggedSlots.contains(s)).toList();
+      }
+
+      final responses = await GeminiService.suggestMeal(
+        profile: profile,
+        conditions: ctx.conditions,
+        dailyState: ctx.dailyState,
+        dailyTotal: dailyTotal,
+        plantWindow: plantWindow,
+        coverMyNeeds: _selectedMode == SuggestionMode.coverMyNeeds,
+        mealSlot: _selectedSlot,
+        remainingSlots: remaining,
+      );
+
+      final conditionNames = ctx.conditions.map((c) => c.conditionName).toList();
+
+      for (var r in responses) {
+        await db.mealSuggestionDao.insertSuggestion(MealSuggestionsCompanion.insert(
+          suggestionId: const Uuid().v4(),
+          userId: widget.userId,
+          mealName: drift.Value(r.mealName),
+          mealSlot: drift.Value(r.mealSlot),
+          ingredients: drift.Value(jsonEncode(r.ingredients)),
+          instructions: drift.Value(r.instructions),
+          gutBrainRationale: drift.Value(r.gutBrainRationale),
+          promptSnapshot: drift.Value(jsonEncode({'mode': _selectedMode?.name})),
+          rawResponseJson: drift.Value(jsonEncode(r.gutBrainRationale)), // rudimentary fallback for toJson issue
+          targetsCondition: drift.Value(conditionNames.join(',')),
+          requestedAt: now.toIso8601String(),
+          userAccepted: const drift.Value(0),
+          stateId: drift.Value(_stateId),
+          fermentedServings: drift.Value(r.fermentedServings),
+          magnesiumMg: drift.Value(r.magnesiumMg),
+          omega3G: drift.Value(r.omega3G),
+          plantSpeciesCount: drift.Value(r.plantSpeciesCount),
+          prebioticFiberG: drift.Value(r.prebioticFiberG),
+          tryptophanMg: drift.Value(r.tryptophanMg),
+        ));
+      }
+
+      setState(() {
+        _aiResponses = responses;
+        _stage = _AiSuggestionStage.review;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _stage = _AiSuggestionStage.pickMode);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not generate suggestions: $e'),
+          backgroundColor: Colors.red.shade400,
+        ),
+      );
+    }
+  }
+  
+  // We don't need a heavy log step here, just marking accepted and inserting meal.
+  Future<void> _acceptSelectedMeals() async {
+    setState(() => _stage = _AiSuggestionStage.logging);
+    try {
+      final db = ref.read(dbProvider);
+      
+      final suggestions = await db.mealSuggestionDao.getSuggestionsForUser(widget.userId);
+
+      for (var index in _selectedMealIndices) {
+        final ai = _aiResponses[index];
+        final suggestion = suggestions.firstWhere((s) => s.mealName == ai.mealName && s.mealSlot == ai.mealSlot);
+        
+        await db.mealSuggestionDao.markAccepted(suggestion.suggestionId);
+
+        final mealId = const Uuid().v4();
+        await db.mealDao.insertMeal(MealsCompanion.insert(
+          mealId: mealId,
+          userId: widget.userId,
+          suggestionId: drift.Value(suggestion.suggestionId),
+          mealName: drift.Value(ai.mealName),
+          mealSlot: drift.Value(ai.mealSlot),
+          plantSpeciesList: drift.Value(jsonEncode(ai.plantSpeciesList)),
+          plantSpeciesCount: drift.Value(ai.plantSpeciesCount),
+          fermentedServings: drift.Value(ai.fermentedServings),
+          magnesiumMg: drift.Value(ai.magnesiumMg),
+          omega3G: drift.Value(ai.omega3G),
+          prebioticFiberG: drift.Value(ai.prebioticFiberG),
+          tryptophanMg: drift.Value(ai.tryptophanMg),
+        ));
+      }
+
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _stage = _AiSuggestionStage.review);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error saving meals: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.9,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFFf7fafa),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0d3d3d).withValues(alpha: 0.20),
+            blurRadius: 40,
+            offset: const Offset(0, -8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Drag handle
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(top: 12, bottom: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF4aabab).withValues(alpha: 0.40),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Flexible(
+            child: SingleChildScrollView(
+              child: _stage == _AiSuggestionStage.collectingState || _stage == _AiSuggestionStage.pickMode
+                  ? IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildCharacterPanel(),
+                          Container(width: 1, color: const Color(0xFF4aabab).withValues(alpha: 0.18)),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+                              child: _buildContentPanel(),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+                      child: _buildContentPanel(),
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCharacterPanel() {
+    return Container(
+      width: 130,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF0d3d3d), Color(0xFF1a5f5f)],
+        ),
+        borderRadius: BorderRadius.only(topLeft: Radius.circular(28)),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Stack(
+        alignment: Alignment.bottomCenter,
+        children: [
+          Positioned(
+            bottom: -20,
+            child: Container(
+              width: 140,
+              height: 140,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(colors: [
+                  const Color(0xFF4aabab).withValues(alpha: 0.22),
+                  Colors.transparent
+                ]),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Image.asset(
+              'assets/chatPersonas/dr_LindaCheckUp.png',
+              height: 175,
+              fit: BoxFit.contain,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContentPanel() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_stage != _AiSuggestionStage.review)
+          _buildNameBadge(),
+        if (_stage != _AiSuggestionStage.review)
+          const SizedBox(height: 14),
+        _buildStageContent(),
+      ],
+    );
+  }
+
+  Widget _buildNameBadge() {
+    return Row(
+      children: [
+        Container(
+          width: 7, height: 7,
+          decoration: const BoxDecoration(color: Color(0xFF4aabab), shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 7),
+        const Text(
+          'DR. LINDA',
+          style: TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 1.4,
+            color: Color(0xFF1a5f5f),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStageContent() {
+    if (_stage == _AiSuggestionStage.collectingState) {
+      return _buildQuestionnaire();
+    }
+    if (_stage == _AiSuggestionStage.pickMode) {
+      return _buildModePicker();
+    }
+    if (_stage == _AiSuggestionStage.loading || _stage == _AiSuggestionStage.logging) {
+      return _buildLoadingStage(_stage == _AiSuggestionStage.loading ? 'Analyzing your needs...' : 'Saving...');
+    }
+    if (_stage == _AiSuggestionStage.review) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Here is what I suggest:',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF1C5F5F),
+              fontFamily: 'Georgia',
+            ),
+          ),
+          const SizedBox(height: 16),
+          ListView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _aiResponses.length,
+            itemBuilder: (ctx, i) {
+              final isSelected = _selectedMealIndices.contains(i);
+              return _AiSuggestionCard(
+                response: _aiResponses[i],
+                isSelected: isSelected,
+                onToggle: () {
+                  setState(() {
+                    if (isSelected) {
+                      _selectedMealIndices.remove(i);
+                    } else {
+                      _selectedMealIndices.add(i);
+                    }
+                  });
+                },
+              );
+            },
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: _selectedMealIndices.isEmpty ? null : _acceptSelectedMeals,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4aabab),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+            child: Text('Log Selected ${_selectedMealIndices.length > 1 ? "(${_selectedMealIndices.length})" : ""}'),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _selectedMealIndices.addAll(List.generate(_aiResponses.length, (i) => i));
+              });
+              _acceptSelectedMeals();
+            },
+            child: const Text('Log All Suggested Meals', style: TextStyle(color: Color(0xFF1a5f5f))),
+          ),
+        ],
+      );
+    }
+    return const SizedBox();
+  }
+
+  Widget _buildLoadingStage(String message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(40.0),
+        child: Column(
+          children: [
+            const CircularProgressIndicator(color: Color(0xFF4aabab)),
+            const SizedBox(height: 20),
+            Text(
+              message,
+              style: const TextStyle(
+                fontFamily: 'Georgia',
+                fontSize: 18,
+                color: Color(0xFF1a5f5f),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModePicker() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'How can I help today?',
+          style: TextStyle(
+            fontFamily: 'Georgia',
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1C5F5F),
+          ),
+        ),
+        const SizedBox(height: 24),
+        InkWell(
+          onTap: () {
+            _selectedMode = SuggestionMode.coverMyNeeds;
+            _generateSuggestions();
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFC3D3AE)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.monitor_heart, color: Color(0xFF4C8C6A)),
+                    SizedBox(width: 12),
+                    Text(
+                      'Cover My Needs',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1C5F5F),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Find what nutrients are missing today and suggest meals to fill the gaps.',
+                  style: TextStyle(color: Color(0xFF4C7A5A)),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        InkWell(
+          onTap: () {
+            setState(() {
+              _selectedMode = SuggestionMode.oneMeal;
+            });
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: _selectedMode == SuggestionMode.oneMeal ? const Color(0xFFDDE8D0) : Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFC3D3AE)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.restaurant, color: Color(0xFF4C8C6A)),
+                    SizedBox(width: 12),
+                    Text(
+                      'Suggest One Meal',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF1C5F5F),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'I just need an idea for my next meal.',
+                  style: TextStyle(color: Color(0xFF4C7A5A)),
+                ),
+                if (_selectedMode == SuggestionMode.oneMeal) ...[
+                  const SizedBox(height: 16),
+                  const Text('Which slot?', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: ['Breakfast', 'Lunch', 'Dinner', 'Snack'].map((s) {
+                      final selected = s == _selectedSlot;
+                      return ChoiceChip(
+                        label: Text(s),
+                        selected: selected,
+                        onSelected: (_) {
+                          _selectedSlot = s;
+                          _generateSuggestions();
+                        },
+                        selectedColor: const Color(0xFF4C8C6A),
+                        labelStyle: TextStyle(
+                          color: selected ? Colors.white : const Color(0xFF1C5F5F),
+                        ),
+                      );
+                    }).toList(),
+                  )
+                ]
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // A very simplified questionnaire builder for the 8 questions
+  Widget _buildQuestionnaire() {
+    final title = 'Daily State (${_questionIndex + 1}/8)';
+    Widget content;
+
+    switch (_questionIndex) {
+      case 0:
+        content = _sliderQ('Mood today?', 'mood');
+        break;
+      case 1:
+        content = _sliderQ('Energy today?', 'energy');
+        break;
+      case 2:
+        content = _sliderQ('Stress today?', 'stress');
+        break;
+      case 3:
+        content = _sliderQ('Digestion today?', 'digestion');
+        break;
+      case 4:
+        content = _sliderQ('Hunger now?', 'hunger');
+        break;
+      case 5:
+        content = _textQ('Hours since last meal?', 'hoursSinceMeal', isNum: true);
+        break;
+      case 6:
+        content = _textQ('Craving anything?', 'craving');
+        break;
+      case 7:
+        content = _textQ('Anything to avoid?', 'aversion');
+        break;
+      default:
+        content = const SizedBox();
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(color: Color(0xFF4aabab), fontWeight: FontWeight.bold)),
+        const SizedBox(height: 24),
+        content,
+        const SizedBox(height: 24),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: () => _nextQuestion('skip_$_questionIndex', null),
+            child: const Text('Skip', style: TextStyle(color: Colors.grey)),
+          ),
+        )
+      ],
+    );
+  }
+
+  Widget _sliderQ(String label, String key) {
+    double val = 5.0;
+    return StatefulBuilder(
+      builder: (context, setState) {
+        return Column(
+          children: [
+            Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            Slider(
+              value: val,
+              min: 1,
+              max: 10,
+              divisions: 9,
+              label: val.round().toString(),
+              activeColor: const Color(0xFF4aabab),
+              onChanged: (v) => setState(() => val = v),
+            ),
+            ElevatedButton(
+              onPressed: () => _nextQuestion(key, val.round()),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1a5f5f), foregroundColor: Colors.white),
+              child: const Text('Next'),
+            )
+          ],
+        );
+      }
+    );
+  }
+
+  Widget _textQ(String label, String key, {bool isNum = false}) {
+    return Column(
+      children: [
+        Text(label, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _textController,
+          keyboardType: isNum ? TextInputType.number : TextInputType.text,
+          decoration: const InputDecoration(filled: true, fillColor: Colors.white),
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton(
+          onPressed: () {
+            if (isNum) {
+              _nextQuestion(key, int.tryParse(_textController.text));
+            } else {
+              _nextQuestion(key, _textController.text);
+            }
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1a5f5f), foregroundColor: Colors.white),
+          child: const Text('Next'),
+        )
+      ],
+    );
+  }
+}
+
+class _AiSuggestionCard extends StatelessWidget {
+  final AiMealResponse response;
+  final bool isSelected;
+  final VoidCallback onToggle;
+
+  const _AiSuggestionCard({
+    required this.response,
+    required this.isSelected,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onToggle,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFFE8F0DF) : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF4aabab) : const Color(0xFFC3D3AE),
+            width: isSelected ? 2 : 1,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF4aabab).withValues(alpha: 0.2),
+                    blurRadius: 8,
+                    offset: const Offset(0, 4),
+                  )
+                ]
+              : [],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Icon(
+                        isSelected ? Icons.check_circle : Icons.circle_outlined,
+                        color: isSelected ? const Color(0xFF4aabab) : Colors.grey,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          response.mealName,
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF1a5f5f)),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4aabab).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    response.mealSlot.toUpperCase(),
+                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF1a5f5f)),
+                  ),
+                )
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (response.ingredients.isNotEmpty) ...[
+              const Text('Ingredients', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1a5f5f))),
+              const SizedBox(height: 4),
+              ...response.ingredients.map((i) => Text('• $i', style: const TextStyle(color: Color(0xFF2a8a8a)))),
+              const SizedBox(height: 12),
+            ],
+            if (response.instructions != null && response.instructions!.isNotEmpty) ...[
+              const Text('Instructions', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1a5f5f))),
+              const SizedBox(height: 4),
+              Text(response.instructions!, style: const TextStyle(color: Color(0xFF2a8a8a))),
+              const SizedBox(height: 12),
+            ],
+            Text(
+              response.gutBrainRationale,
+              style: const TextStyle(fontStyle: FontStyle.italic, color: Color(0xFF4aabab)),
+            ),
+            const SizedBox(height: 16),
+            // Short grid
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _buildMiniGridCell('+${response.plantSpeciesCount}', 'PLANTS'),
+                _buildMiniGridCell('${response.prebioticFiberG.round()}g', 'FIBER'),
+                _buildMiniGridCell('${response.omega3G.round()}g', 'OMEGA-3'),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniGridCell(String val, String label) {
+    return Column(
+      children: [
+        Text(val, style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1C5F5F))),
+        Text(label, style: const TextStyle(fontSize: 10, color: Color(0xFF4C7A5A))),
+      ],
+    );
+  }
 }

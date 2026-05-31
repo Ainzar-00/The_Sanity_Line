@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 /// Matches the backend `DailyNutrientTotalRequest` DTO exactly.
 class DailyNutrientTotalsApiService {
-  static const String _base = 'http://192.168.1.200:8080/api/v1/daily-totals';
+  static const String _base = 'http://192.168.1.200:8080/api/v1/nutrient-totals';
 
   /// Build a `DailyNutrientTotalRequest`-compatible body map.
   static Map<String, dynamic> _buildBody({
@@ -41,7 +41,8 @@ class DailyNutrientTotalsApiService {
         if (targetTryptophanMg != null) 'targetTryptophanMg': targetTryptophanMg,
       };
 
-  /// PATCH today's row; if not found (404) automatically POST to create it.
+  /// Creates or updates today's daily nutrient totals row by sending a POST request to the backend.
+  /// The backend's POST endpoint `/api/v1/nutrient-totals` handles upsert logic on the server.
   /// Returns true on success.
   static Future<bool> upsertTotals({
     required String userId,
@@ -79,32 +80,19 @@ class DailyNutrientTotalsApiService {
     );
 
     try {
-      // Try PATCH first
-      final patchResponse = await http.patch(
-        Uri.parse('$_base/user/$userId/date/$date'),
+      print('[DailyNutrientTotalsApiService] POSTing to $_base with body: ${jsonEncode(body)}');
+      final response = await http.post(
+        Uri.parse(_base),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(body),
       );
 
-      if (patchResponse.statusCode == 200 || patchResponse.statusCode == 204) {
+      if (response.statusCode == 200 || response.statusCode == 201 || response.statusCode == 204) {
+        print('[DailyNutrientTotalsApiService] POST success: ${response.statusCode}');
         return true;
       }
 
-      // Row doesn't exist yet — POST to create it
-      if (patchResponse.statusCode == 404) {
-        final postResponse = await http.post(
-          Uri.parse(_base),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(body),
-        );
-        if (postResponse.statusCode == 200 || postResponse.statusCode == 201) {
-          return true;
-        }
-        print('[DailyNutrientTotalsApiService] POST failed: ${postResponse.statusCode} ${postResponse.body}');
-        return false;
-      }
-
-      print('[DailyNutrientTotalsApiService] PATCH failed: ${patchResponse.statusCode} ${patchResponse.body}');
+      print('[DailyNutrientTotalsApiService] POST failed: ${response.statusCode} ${response.body}');
       return false;
     } catch (e) {
       print('[DailyNutrientTotalsApiService] Exception: $e');
@@ -132,5 +120,25 @@ class DailyNutrientTotalsApiService {
       targetMagnesiumMg: (body['targetMagnesiumMg'] as num?)?.toDouble(),
       targetTryptophanMg: (body['targetTryptophanMg'] as num?)?.toDouble(),
     );
+  }
+
+  /// Fetch today's daily nutrient totals row from the backend.
+  static Future<Map<String, dynamic>?> fetchTotalsForDate(
+      String userId, String date) async {
+    final url = '$_base/user/$userId/date/$date';
+    try {
+      print('[DailyNutrientTotalsApiService] GETing from $url');
+      final response = await http.get(Uri.parse(url));
+
+      if (response.statusCode == 200) {
+        print('[DailyNutrientTotalsApiService] GET success: ${response.body}');
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      print('[DailyNutrientTotalsApiService] GET failed or empty: ${response.statusCode}');
+      return null;
+    } catch (e) {
+      print('[DailyNutrientTotalsApiService] Exception in fetchTotalsForDate: $e');
+      return null;
+    }
   }
 }

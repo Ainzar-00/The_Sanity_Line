@@ -14,14 +14,14 @@ class MealDao extends DatabaseAccessor<AppDatabase> with _$MealDaoMixin {
   /// All meals for a user.
   Future<List<Meal>> getMealsForUser(String userId) =>
       (select(meals)
-            ..where((t) => t.userId.equals(userId))
+            ..where((t) => t.userId.equals(userId) & t.isLogged.equals(false))
             ..orderBy([(t) => OrderingTerm.desc(t.mealId)]))
           .get();
 
   /// Reactive stream — emits a new list whenever meals change.
   Stream<List<Meal>> watchMealsForUser(String userId) =>
       (select(meals)
-            ..where((t) => t.userId.equals(userId))
+            ..where((t) => t.userId.equals(userId) & t.isLogged.equals(false))
             ..orderBy([(t) => OrderingTerm.desc(t.mealId)]))
           .watch();
 
@@ -29,6 +29,10 @@ class MealDao extends DatabaseAccessor<AppDatabase> with _$MealDaoMixin {
   Future<Meal?> getMealById(String mealId) =>
       (select(meals)..where((t) => t.mealId.equals(mealId)))
           .getSingleOrNull();
+
+  Future<void> markAsLogged(String mealId) =>
+      (update(meals)..where((t) => t.mealId.equals(mealId)))
+          .write(const MealsCompanion(isLogged: Value(true)));
 
   /// Delete a meal in a single transaction:
   ///  1. If the meal has a suggestion → mark it rejected.

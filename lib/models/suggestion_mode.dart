@@ -1,0 +1,1 @@
+enum SuggestionMode { coverMyNeeds, oneMeal }

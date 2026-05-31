@@ -10,6 +10,12 @@ class AiMealResponse {
   final double tryptophanMg;
   final String gutBrainRationale;
 
+  /// Flat list of ingredient strings returned by the AI.
+  final List<String> ingredients;
+
+  /// Optional step-by-step cooking instructions returned by the AI.
+  final String? instructions;
+
   AiMealResponse({
     required this.mealName,
     required this.mealSlot,
@@ -21,6 +27,8 @@ class AiMealResponse {
     required this.prebioticFiberG,
     required this.tryptophanMg,
     required this.gutBrainRationale,
+    this.ingredients = const [],
+    this.instructions,
   });
 
   factory AiMealResponse.fromJson(Map<String, dynamic> json) {
@@ -38,6 +46,11 @@ class AiMealResponse {
       prebioticFiberG: (json['prebioticFiberG'] as num?)?.toDouble() ?? 0.0,
       tryptophanMg: (json['tryptophanMg'] as num?)?.toDouble() ?? 0.0,
       gutBrainRationale: json['gutBrainRationale'] as String? ?? '',
+      ingredients: (json['ingredients'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          [],
+      instructions: json['instructions'] as String?,
     );
   }
 }

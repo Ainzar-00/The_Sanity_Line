@@ -72,6 +72,9 @@ class Meals extends Table {
   /// Flag for offline sync. True if successfully synced to the backend.
   BoolColumn get isSynced => boolean().withDefault(const Constant(false))();
 
+  /// Flag to hide the meal card once logged.
+  BoolColumn get isLogged => boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {mealId};
 }
@@ -139,7 +142,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -152,6 +155,9 @@ class AppDatabase extends _$AppDatabase {
             await m.addColumn(meals, meals.isSynced);
             await m.addColumn(mealLogs, mealLogs.isSynced);
             await m.addColumn(dailyNutrientTotals, dailyNutrientTotals.isSynced);
+          }
+          if (from < 3) {
+            await m.addColumn(meals, meals.isLogged);
           }
         },
         beforeOpen: (details) async {
